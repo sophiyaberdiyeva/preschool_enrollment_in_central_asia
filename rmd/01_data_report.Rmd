@@ -1,0 +1,113 @@
+---
+title: "Prediction of preschool education enrollment in Central Asian countries"
+subtitle: "Data Report"
+author: "Sofiya Berdiyeva"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: true
+    highlight: tango
+---
+```{=html}
+<style>
+.scroll-box {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  padding: 6px;
+  margin-bottom: 1em;
+}
+</style>
+```
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+source(here::here("R", "00_load_packages.R"))
+source(here::here("R", "01_data_cleaning.R"))
+
+```
+
+#  1. Loading the preprocessed data
+
+Pre-processing included the following steps *(in the back end)*:
+
+1. Opening SPSS (.sav) files for children under 5 questionnaire, for households and for household members
+
+2. Removing all variables that are irrelevant for the analysis
+
+3. Filtering out children outside the range of 3-4 years old
+
+4. Adding unique indexes to each of the dataframes based on the logic:
+
+"region_id" + "_" + "cluster_id" + "_" + "household_id" + "_" + "line number"
+
+("+" = concatenation)
+
+5. (Left) joining dataframes to retrieve all necessary variables from each questionnaire
+
+6. Removal of duplicating variables after joins
+
+```{r}
+kazakhstan <- get_and_preprocess_mics_data("Kazakhstan")
+kyrgyzstan <- get_and_preprocess_mics_data("Kyrgyzstan")
+turkmenistan <- get_and_preprocess_mics_data("Turkmenistan")
+uzbekistan <- get_and_preprocess_mics_data("Uzbekistan")
+
+tajikistan <- preprocess_dhs_data(child_set_path = "data/raw/Tajikistan/TJKR81SV_childrens_recode/TJKR81FL.sav",
+                                  house_members_path = "data/raw/Tajikistan/TJPR81SV_household_member_recode/TJPR81FL.sav")
+```
+
+## Kazakhstan
+
+```{r, results = "asis"}
+cat('<div class="scroll-box">')
+view_df(kazakhstan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+cat('</div>')
+```
+
+## Kyrgyzstan
+
+```{r, results = "asis"}
+cat('<div class="scroll-box">')
+view_df(kyrgyzstan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+cat('</div>')
+```
+
+## Turkmenistan
+
+```{r, results = "asis"}
+cat('<div class="scroll-box">')
+view_df(turkmenistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+cat('</div>')
+```
+
+## Uzbekistan
+
+```{r, results = "asis"}
+cat('<div class="scroll-box">')
+view_df(uzbekistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+cat('</div>')
+```
+
+## Tajikistan
+
+```{r, results = "asis"}
+cat('<div class="scroll-box">')
+view_df(tajikistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+cat('</div>')
+```
+
+# 2. Outcome Variable(s)
+# 3. Covariates
+# 4. Missing Data
+# 5. Cross-country Comparison
+# 6. Implications for Empirical Analysis
+
+# 7. Summary: concerns to discuss
+
