@@ -1,7 +1,6 @@
 # Prediction of preschool education enrollment in Central Asian countries
 
-## Master thesis prepared by Sofiya Berdiyeva, Master student of Hertie School, Berlin.
-### Supervised by Dr. Simon Munzert
+### Master thesis prepared by Sofiya Berdiyeva, Master student of Hertie School, Berlin, supervised by Dr. Simon Munzert
 
 The project investigates the determinants of preschool education enrollment in Central Asia by integrating individual and structural-level factors within a unified analytical framework. The central research question (RQ) is: 
 
