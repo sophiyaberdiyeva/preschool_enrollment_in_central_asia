@@ -55,12 +55,12 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "UCD2K",      # Beat child up (hit over and over as hard as one could) (Yes/No)
     
     # Early stimulation and responsive care
-    "EC5A",       # Reading books or looking at picture books with child (Yes/No/DK)
-    "EC5B",       # Telling stories to child (Yes/No/DK)
-    "EC5C",       # Singing songs to or with child, including lullabies (Yes/No/DK)
-    "EC5D",       # Taking child outside the home (Yes/No/DK)
-    "EC5E",       # Playing with child (Yes/No/DK)
-    "EC5F",       # Naming, counting, or drawing things for or with child (Yes/No/DK)
+    grep("^EC5A", names(dataset), value = TRUE),       # Reading books or looking at picture books with child (Yes/No/DK)
+    grep("^EC5B", names(dataset), value = TRUE),      # Telling stories to child (Yes/No/DK)
+    grep("^EC5C", names(dataset), value = TRUE),       # Singing songs to or with child, including lullabies (Yes/No/DK)
+    grep("^EC5D", names(dataset), value = TRUE),       # Taking child outside the home (Yes/No/DK)
+    grep("^EC5E", names(dataset), value = TRUE),       # Playing with child (Yes/No/DK)
+    grep("^EC5F", names(dataset), value = TRUE),       # Naming, counting, or drawing things for or with child (Yes/No/DK)
     
     # Social transfers
     "ST1A",       # Monthly social allowance (Yes/No)
@@ -69,7 +69,8 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "ST1D",       # Any retirement pension (Yes/No)
     "ST1X",       # Any other external assistance programme (Yes/No)
     
-    # ECDI2030 - Health domain
+    # ECDI2030 (numeration of variables varies for Uzbekistan and Kyrgyzstan)
+    # Health domain
     "EC6",        # Can child walk on uneven surface without falling (Yes/No/DK)
     "EC7",        # Can child jump up with both feet leaving the ground (Yes/No/DK)
     "EC8",        # Can child dress him/herself without help (Yes/No/DK)
@@ -98,10 +99,12 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "EC23",       # Does child get along well with other children (Yes/No/DK)
     "EC24",       # How often does child seem very sad or depressed (Daily/Weekly/Monthly/Few times a year/Never/DK)
     "EC25",       # Compared with same age, how much does child kick, bite, or hit others (Not at all/Less/Same/More/A lot more/DK)
+    "EC26", "EC27", "EC28", "EC29", "EC30", "EC31", "EC32", "EC33", "EC34", "EC35", "EC36", "EC37", "EC38", "EC39", "EC40",
     
     # Outcome variables - Childcare arrangement
     "UB6",        # Has child ever attended any early childhood education programme (Yes/No)
     "UB7",        # Did child attend programme since September [year] (Yes/No)
+    "UB8",        # Currently attending early childhood education programme
     "UB8A",       # Does child currently attend programme (Yes/No)
     "UB8B"        # Does child currently attend programme (alternative question) (Yes/No)
   )
@@ -126,6 +129,7 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "HV121", #Member attended school during current school year
     
     # Area of residence
+    "V024",      # Region of residence
     "HV025",     # Type of place of residence (1 = Urban, 2 = Rural)
     
     # Household size
@@ -225,6 +229,8 @@ join_mics_datasets <- function(child_set, household_set, house_members_set){
   # Removes duplicating columns
   joined_set <- joined_set %>%
     select(-ends_with(".y"))
+  joined_set <- joined_set %>%
+    select(-ends_with(".x"))
   
   return(joined_set)
 }
@@ -284,6 +290,11 @@ get_and_preprocess_mics_data <- function(country) {
     final_joined <- final_joined %>% filter(`round`==2)
   }
   
+  if ("EC5A" %in% colnames(final_joined)) {
+    final_joined <- final_joined %>%
+      select(-matches("^EC5.{2,4}$"))
+  }
+
   return(final_joined)
 }
 
@@ -302,3 +313,17 @@ preprocess_dhs_data <- function(child_set_path,
   
   return(final_joined)
 }
+
+# kazakhstan <- get_and_preprocess_mics_data("Kazakhstan")
+# kyrgyzstan <- get_and_preprocess_mics_data("Kyrgyzstan")
+# turkmenistan <- get_and_preprocess_mics_data("Turkmenistan")
+# uzbekistan <- get_and_preprocess_mics_data("Uzbekistan")
+# 
+# tajikistan <- preprocess_dhs_data(child_set_path = "data/raw/Tajikistan/TJKR81SV_childrens_recode/TJKR81FL.sav",
+#                                   house_members_path = "data/raw/Tajikistan/TJPR81SV_household_member_recode/TJPR81FL.sav")
+
+# write.csv(kazakhstan,"data/processed/Kazakhstan_MICS.csv")
+# write.csv(kyrgyzstan,"data/processed/Kyrgyzstan_MICS.csv")
+# write.csv(turkmenistan,"data/processed/Turkmenistan_MICS.csv")
+# write.csv(uzbekistan,"data/processed/Uzbekistan_MICS.csv")
+# write.csv(tajikistan,"data/processed/Tajikistan_DHS.csv")

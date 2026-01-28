@@ -10,6 +10,7 @@ output:
     lightbox: true
     gallery: true
     highlight: tango
+    toc_depth: 6
 ---
 ```{=html}
 <style>
@@ -28,86 +29,286 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
 )
+htmlwidgets::setWidgetIdSeed(123)
+
 source(here::here("R", "00_load_packages.R"))
 source(here::here("R", "01_data_cleaning.R"))
-
+source(here::here("R", "02_descriptives.R"))
+set.seed(42)
 ```
+
+**GitHub link**: https://github.com/sophiyaberdiyeva/preschool_enrollment_in_central_asia
 
 #  1. Loading the preprocessed data
 
 Pre-processing included the following steps *(in the back end)*:
 
-1. Opening SPSS (.sav) files for children under 5 questionnaire, for households and for household members
+1. Opening SPSS (.sav) files for children under 5, households and  household members questionnaires.
 
-2. Removing all variables that are irrelevant for the analysis
+2. Removing all variables that are irrelevant for the analysis.
 
-3. Filtering out children outside the range of 3-4 years old
+3. Filtering out children outside the range of 3-4 years old.
 
-4. Adding unique indexes to each of the dataframes based on the logic:
+4. Adding unique indexes to each of the dataframes.
 
-"region_id" + "_" + "cluster_id" + "_" + "household_id" + "_" + "line number"
+5. (Left) joining dataframes to retrieve all necessary variables from each questionnaire.
 
-("+" = concatenation)
-
-5. (Left) joining dataframes to retrieve all necessary variables from each questionnaire
-
-6. Removal of duplicating variables after joins
+6. Removal of duplicating variables after joins.
 
 ```{r}
-kazakhstan <- get_and_preprocess_mics_data("Kazakhstan")
-kyrgyzstan <- get_and_preprocess_mics_data("Kyrgyzstan")
-turkmenistan <- get_and_preprocess_mics_data("Turkmenistan")
-uzbekistan <- get_and_preprocess_mics_data("Uzbekistan")
+kazakhstan_mics <- get_and_preprocess_mics_data("Kazakhstan")
+kyrgyzstan_mics <- get_and_preprocess_mics_data("Kyrgyzstan")
+turkmenistan_mics <- get_and_preprocess_mics_data("Turkmenistan")
+uzbekistan_mics <- get_and_preprocess_mics_data("Uzbekistan")
 
-tajikistan <- preprocess_dhs_data(child_set_path = "data/raw/Tajikistan/TJKR81SV_childrens_recode/TJKR81FL.sav",
+tajikistan_dhs <- preprocess_dhs_data(child_set_path = "data/raw/Tajikistan/TJKR81SV_childrens_recode/TJKR81FL.sav",
                                   house_members_path = "data/raw/Tajikistan/TJPR81SV_household_member_recode/TJPR81FL.sav")
 ```
 
+### Loading region-level data
+
+```{r, message=FALSE}
+region_kz <- read_csv("../data/raw/regional_data_Kazakhstan_2024.csv")
+region_kg <- read_csv("../data/raw/regional_data_Kyrgyzstan_2023.csv")
+region_tm <- read_csv("../data/raw/regional_data_Turkmenistan_2024.csv")
+region_uz <- read_csv("../data/raw/regional_data_Uzbekistan_2022.csv")
+region_tj <- read_csv("../data/raw/regional_data_Tajikistan_2023.csv")
+```
+
+After loading all of the data, we explored the main variable statistics across datasets. Below an exhaustive list of dataset description tables is provided (for each country and level of analysis).
+
 ## Kazakhstan
 
-```{r, results = "asis"}
+### Individual level
+
+```{r, results = "asis", echo=F}
 cat('<div class="scroll-box">')
-view_df(kazakhstan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+view_df(kazakhstan_mics, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
 cat('</div>')
+```
+
+```{r}
+# Age of child vs current enrollment (1 - Yes, 2 - No, 9 - No response)
+table(kazakhstan_mics$UB8, kazakhstan_mics$UB2)
+```
+
+**Findings**:
+
+* Data are mostly clean, but the majority of variables for analysis need recoding from 4 answer options to binary scheme (Yes/No). We plan to merge "No", "Don't know" and "No Response" options together.
+
+* Missing values are present for four variables, including the outcome. We propose the following strategies for handling this issue:
+
+  - *EC12.	Child speaks using sentences of 5 or more words that go together*:	397 missing values imputed by "No".
+  
+  - *UB8.	Currently attending early childhood education programme*: 879 (30.52%) missing values. We will recode them to "No", since our hypotheses for this missingness root are (1) data collection period falling between two school years or (2) imperfect training of interviewers.
+  
+  - *HL13.	Does natural mother live in the household*: 7 missing values - omit rows containing them.
+  
+  - *HL17.	Does natural father live in the household*: 32 missing values - omit rows containing them.
+  
+* Data are well-balanced in terms of age (53.82% for 3 y.o. and 46.18% for 4 y.o.) and urban/rural distributions (52.15% for urban and 47.85% for rural).
+  
+
+### Regional level
+
+For regional data, we decided to provide summary statistics instead of raw observations, even though number of regions is relatively small across all countries. 
+
+```{r}
+psych::describe(region_kz[,-c(1,2)]) %>% kbl(digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
 ## Kyrgyzstan
 
-```{r, results = "asis"}
+### Individual level
+
+```{r, results = "asis", echo=F}
 cat('<div class="scroll-box">')
-view_df(kyrgyzstan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+view_df(kyrgyzstan_mics, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
 cat('</div>')
+```
+
+```{r}
+# Age of child vs attended preschool during current school year (1 - Yes, 2 - No, 9 - No response)
+table(kyrgyzstan_mics$UB7, kyrgyzstan_mics$UB2)
+```
+
+* For Kyrgyzstan and Uzbekistan, number of variables is way higher (92-93 compared to 66) due to the data encoding specifics: some of the variables that had to be recoded based on sub-items and provided as separate features ("EC5[A-D]") are missing, creating the neccessity for us to perform this recoding on our own.
+
+* This dataset has shifted enumeration of early childhood (EC) development variables.
+
+* Here, 5 variables have missing values:
+
+  - *EC27.	A child speak using sentences of 5 or more words that go together*: 142 missing values will be recoded as "No".
+  
+  - *UB7.	Attended early childhood education programme of current school year*:	760 (54.60%) are missing, which might seem problematic for a sample of 1392. We are going to recode them to "No" just like in case of Kazakhstan. For *UB8	Currently attending early childhood education programme* values are missing as well (798 observations or 57.33%), but we are not including it into final analysis for this country.
+  
+  - *HL13.	Does natural mother live in the household*: 3 missing values - omit rows containing them.
+  
+  - *HL17.	Does natural father live in the household*: 15 missing values - omit rows containing them.
+
+* Dataset is skewed towards rural population (67.60%).
+
+### Regional level
+
+```{r}
+psych::describe(region_kg[,-c(1)]) %>% kbl(digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
 ## Turkmenistan
 
-```{r, results = "asis"}
+### Individual level
+
+```{r, results = "asis", echo=F}
 cat('<div class="scroll-box">')
-view_df(turkmenistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+view_df(turkmenistan_mics, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
 cat('</div>')
+```
+
+```{r}
+# Age of child vs current enrollment (1 - Yes, 2 - No, 9 - No response)
+table(turkmenistan_mics$UB8, turkmenistan_mics$UB2)
+```
+
+* Missing values are present for four variables. We propose the following strategies for handling this issue:
+
+  - *EC12.	Child speaks using sentences of 5 or more words that go together*:	50 missing values imputed by "No".
+  
+  - One more time, target variable *UB8	Currently attending early childhood education programme* is half empty (665 values or 47.57%). Same strategy for imputation with "No" values will be employed.
+  
+  - *HL13.	Does natural mother live in the household*: 5 missing values - omit rows containing them.
+  
+  - *HL17.	Does natural father live in the household*: 18 missing values - omit rows containing them.
+
+### Regional level
+```{r}
+psych::describe(region_tm[,-c(1)]) %>% kbl(digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
 ## Uzbekistan
 
-```{r, results = "asis"}
+### Individual level
+
+```{r, results = "asis", echo=F}
 cat('<div class="scroll-box">')
-view_df(uzbekistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+view_df(uzbekistan_mics, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
 cat('</div>')
+```
+
+```{r}
+# Age of child vs attended preschool during current school year (1 - Yes, 2 - No, 9 - No response)
+table(uzbekistan_mics$UB7, uzbekistan_mics$UB2)
+```
+
+* Again, 4 variables have missing values:
+
+  - *EC27.	A child speak using sentences of 5 or more words that go together*: 20 missing values will be recoded as "No".
+  
+  - *UB7.	Attended early childhood education programme of current school year*:	379 (49.03%)) are missing, and sample is even smaller - 773 observations. We plan to recode them to "No" as well due to the same assumptions proposed for Kazakhstan. One more time, *UB8	Currently attending early childhood education programme* is half missing too (50.97%), but it doesn't concern us much in this case.
+  
+  - *HL17.	Does natural father live in the household*: 5 missing values - omit rows containing them.
+
+### Regional level
+
+```{r}
+psych::describe(region_uz[,-c(1)]) %>% kbl(digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
 ## Tajikistan
 
-```{r, results = "asis"}
+### Individual level
+
+```{r, results = "asis", echo=F}
 cat('<div class="scroll-box">')
-view_df(tajikistan, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
+view_df(tajikistan_dhs, show.na = TRUE, show.frq = TRUE, show.prc = TRUE)
 cat('</div>')
 ```
 
-# 2. Outcome Variable(s)
-# 3. Covariates
-# 4. Missing Data
-# 5. Cross-country Comparison
-# 6. Implications for Empirical Analysis
+```{r}
+# Age of child vs attended preschool during current school year (2 - Attended at some time, 0 - No)
+table(tajikistan_dhs$HV121.x, tajikistan_dhs$B8)
+# Region vs attended preschool during current school year (2 - Attended at some time, 0 - No)
+table(tajikistan_dhs$HV121.x, tajikistan_dhs$V024)
+```
 
-# 7. Summary: concerns to discuss
+* Since Tajikistan data originate from DHS, they have completely different variable naming system.
 
+* Among all variables related to child discipline (HCDI3[A-K]), 24 values are missing. Respective rows will be later omitted.
+
+* There is one very concerning issue and one minor with the main outcome variable:
+ 
+  - *HV121.x.	Member attended school during current school year* is extremely imbalanced towards "No" option:	1879 (97.36%) versus 51 (2.64%).
+ 
+  - It has 11 missing values, that could be omitted in this case.
+
+### Regional level
+```{r}
+psych::describe(region_tj[,-c(1)]) %>% kbl(digits=2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# 2. Correlations and associations in the wild. Case of Kazakhstan
+
+For having a quick look at associations between variables, we performed the following tests on the data for Kazakhstan (since by now we assume the results to be more or less consistent across countries):
+
+* Pairwise chi-squared tests for categorical variables within individual-level dataframe.
+
+* For the pairs that had a significant chhi-squared statistic, we calculated Cramer's V coefficient, that is supposed to measure the strength of an association. This approach of pairs selection might be imperfect in a statistical sense, but looks mostly adequate for our purposes of revealing potential multicollinearity between predictors and getting a preliminary impression of potential statistical significance of independent variables in the future models.
+
+* The Spearman rank correlation test was conducted for the continuous regional level variables.
+
+### Individual level
+
+```{r}
+
+results <- pairwise_chi_cramers_parallel(
+  kazakhstan_mics[,-c(1,2,3,4,5,6,7,53,54,59,60,62)], n_cores = 4, p_threshold = 0.05, use_bonferroni = TRUE)
+
+# Get summary
+summary_stats(results)
+
+# Create heatmap
+plot <- plot_cramers_heatmap(results)
+print(plot)
+
+# View top associations
+top_40 <- get_top_associations(results, n = 40)
+print(top_40)
+```
+
+As we can observe, only fourty (unique) pairs had associations strength higher than 0.5:
+
+* EC2[A-C] (presence of playthings) seem to be associated with the variables corresponding to the components of Early Childhood Development Index 2030 (ECDI2030, variables EC6-EC25).
+
+* As expected, items measuring one phenomena are associated with each other: we can see clear colored clusters for Child Discipline (and violence) UCD2[A-K] group of variables, for playthings materials EC2[A-C], EC5[A-F] - early stimulation and responsive care set, and the most clear one for the EC6-EC25, i.e. ECDI2030. All of these groups will be consolidated later, so these associations should not be problematic.
+
+* There is a weak association between HH7 - region of the household, and the majority of variables, which is nicely justifying our usage of multilevel modeling.
+
+* HH48 (number of household members) seems to be associated with other household characteristics like number of children under 5 (HH51), wealth (windex5), having vehicles like a motorcycle or a car, and mother/father of the child living in the household (HL13/HL17, respectively).
+
+* **The most concerning finding: few (just 4, without any household-related features) pairwise associations between target variable "UB8" and the rest of predictors**. If this will also be the reflected in the multilevel modelling results, we will consider selecting out the component items and using them instead of composite scores (e.g. separate early childhood development items instead of ECDI2030).
+
+### Regional level (n=20)
+
+```{r}
+numeric_vars <- region_kz[sapply(region_kz, is.numeric)]
+region_kz.cor <- cor(numeric_vars, method = "spearman")
+corrplot(region_kz.cor, tl.col="black")
+```
+
+Here, we can observe the following tendencies:
+
+* Labor force participation by both men and women is very weakly correlated with any other variables.
+
+* The total population of the region seems to be highly correlated with most preschool education-related variables, whereas population density is only moderately correlated with them. 
+
+# 3. Further concerns to discuss
+
+1. It needs to be decided, which variables would be the most adequate to select for the regional level. By now, there are too many, and some of them are clearly redundant. Also, their rescaling is to be discussed.
+
+2. We are unsure whether chosen recoding and missing values imputation strategies are adequate.
+
+3. The is a proposition to handle the imbalance in the target variable in Tajikistan through adjusting class weights.
