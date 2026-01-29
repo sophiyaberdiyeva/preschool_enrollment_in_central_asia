@@ -97,18 +97,21 @@ table(kazakhstan_mics$UB8, kazakhstan_mics$UB2)
 
 * Data are mostly clean, but the majority of variables for analysis need recoding from 4 answer options to binary scheme (Yes/No). We plan to merge "No", "Don't know" and "No Response" options together.
 
-* Missing values are present for four variables, including the outcome. We propose the following strategies for handling this issue:
+* Missing values are present for five variables, including the outcome. We propose the following strategies for handling this issue:
 
   - *EC12.	Child speaks using sentences of 5 or more words that go together*:	397 missing values imputed by "No".
   
-  - *UB8.	Currently attending early childhood education programme*: 879 (30.52%) missing values. We will recode them to "No", since our hypotheses for this missingness root are (1) data collection period falling between two school years or (2) imperfect training of interviewers.
+  - *UB8.	Currently attending early childhood education programme*: 879 (30.52%) missing values. We will recode them to "No", since missing values are simply the result of filtering out children that have never attended preschool (which is a separate item ED4)
   
   - *HL13.	Does natural mother live in the household*: 7 missing values - omit rows containing them.
   
   - *HL17.	Does natural father live in the household*: 32 missing values - omit rows containing them.
   
+  - *ED5A.	Highest level of education attended (by caregiver)*:	3 missing values - omit rows containing them.
+  
 * Data are well-balanced in terms of age (53.82% for 3 y.o. and 46.18% for 4 y.o.) and urban/rural distributions (52.15% for urban and 47.85% for rural).
   
+* There are no data on social transfers for this country
 
 ### Regional level
 
@@ -134,19 +137,21 @@ cat('</div>')
 table(kyrgyzstan_mics$UB7, kyrgyzstan_mics$UB2)
 ```
 
-* For Kyrgyzstan and Uzbekistan, number of variables is way higher (86-87 compared to 60) due to the data encoding specifics: some of the variables that had to be recoded based on sub-items and provided as separate features ("EC5[A-D]") are missing, creating the neccessity for us to perform this recoding on our own.
+* For Kyrgyzstan and Uzbekistan, number of variables is way higher (96-97 compared to 61) due to the data encoding specifics: some of the variables that had to be recoded based on sub-items and provided as separate features ("EC5[A-D]") are missing, creating the neccessity for us to perform this recoding on our own.
 
 * This dataset has shifted enumeration of early childhood (EC) development variables.
 
-* Here, 5 variables have missing values:
+* Here, 6 variables have missing values (excluding social transfers-related set of items):
 
   - *EC27.	A child speak using sentences of 5 or more words that go together*: 142 missing values will be recoded as "No".
   
-  - *UB7.	Attended early childhood education programme of current school year*:	760 (54.60%) are missing, which might seem problematic for a sample of 1392. We are going to recode them to "No" just like in case of Kazakhstan. For *UB8	Currently attending early childhood education programme* values are missing as well (798 observations or 57.33%), but we are not including it into final analysis for this country.
+  - *UB7.	Attended early childhood education programme of current school year*:	760 (54.60%) are missing due to filtering from ED4, will also be imputed by "No".
   
   - *HL13.	Does natural mother live in the household*: 3 missing values - omit rows containing them.
   
   - *HL17.	Does natural father live in the household*: 15 missing values - omit rows containing them.
+  
+  - *ED5A.	Highest level of education attended (by caregiver)*:	1 missing value - omit row containing it.
 
 * Dataset is skewed towards rural population (67.60%).
 
@@ -172,7 +177,7 @@ cat('</div>')
 table(turkmenistan_mics$UB8, turkmenistan_mics$UB2)
 ```
 
-* Missing values are present for four variables. We propose the following strategies for handling this issue:
+* Missing values are present for five variables (again, except for social transfers). We propose the following strategies for handling this issue:
 
   - *EC12.	Child speaks using sentences of 5 or more words that go together*:	50 missing values imputed by "No".
   
@@ -181,6 +186,8 @@ table(turkmenistan_mics$UB8, turkmenistan_mics$UB2)
   - *HL13.	Does natural mother live in the household*: 5 missing values - omit rows containing them.
   
   - *HL17.	Does natural father live in the household*: 18 missing values - omit rows containing them.
+  
+  - *ED4.	Ever attended educational institution*:	1 missing value, row will be omitted.
 
 ### Regional level
 ```{r}
@@ -203,13 +210,17 @@ cat('</div>')
 table(uzbekistan_mics$UB7, uzbekistan_mics$UB2)
 ```
 
-* Again, 4 variables have missing values:
+* Again, 5 variables have missing values:
 
   - *EC27.	A child speak using sentences of 5 or more words that go together*: 20 missing values will be recoded as "No".
   
-  - *UB7.	Attended early childhood education programme of current school year*:	379 (49.03%)) are missing, and sample is even smaller - 773 observations. We plan to recode them to "No" as well due to the same assumptions proposed for Kazakhstan. One more time, *UB8	Currently attending early childhood education programme* is half missing too (50.97%), but it doesn't concern us much in this case.
+  - *UB7.	Attended early childhood education programme of current school year*:	379 (49.03%)) are missing, and sample is even smaller - 773 observations. We plan to recode them to "No" as well due to the same filtering roots of the problem. *UB8	Currently attending early childhood education programme* is half missing too (50.97%), but it doesn't concern us much in this case.
   
   - *HL17.	Does natural father live in the household*: 5 missing values - omit rows containing them.
+  
+  -   - *ED5A.	Highest level of education attended (by caregiver)*:	2 missing values - omit rows containing them.
+
+* Information on social transfers were not included into the second round of data collection (i.e. subset we are currently using), which makes the items being present in the full datafile, but entirely empty in ours.
 
 ### Regional level
 
@@ -266,7 +277,7 @@ For having a quick look at associations between variables, we performed the foll
 ```{r, warning=F}
 
 results <- pairwise_chi_cramers_parallel(
-  kazakhstan_mics[,-c(1,2,3,4,5,6,7,47,48, 53,56)], n_cores = 4, p_threshold = 0.05, use_bonferroni = FALSE)
+  kazakhstan_mics[, !names(kazakhstan_mics) %in% c("LN", "UF1", "UF2","UF3", "UF4","UF10", "UF17","line_num_index", "house_index", "HH1", "HL1")], n_cores = 4, p_threshold = 0.05, use_bonferroni = FALSE)
 
 
 # Get summary

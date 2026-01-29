@@ -24,7 +24,7 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "HH51",       # Total number of children under age 5
     "HL13",       # Does child's natural mother live in household (Yes/No)
     "HL17",       # Does child's natural father live in household (Yes/No)
-    "ED5",        # Highest level of education attended by caretaker
+    "ED5A",        # Highest level of education attended by caretaker
     "windex5",     # Wealth index quintile
     
     # Household durable goods
@@ -57,11 +57,29 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     grep("^EC5F", names(dataset), value = TRUE),       # Naming, counting, or drawing things for or with child (Yes/No/DK)
     
     # Social transfers
-    "ST1A",       # Monthly social allowance (Yes/No)
-    "ST1B",       # One-time grant paid for a birth/maternity benefit (Yes/No)
-    "ST1C",       # Monthly allowance for low-income families with children (Yes/No)
-    "ST1D",       # Any retirement pension (Yes/No)
-    "ST1X",       # Any other external assistance programme (Yes/No)
+    # Kyrgyzstan, Uzbekistan
+    "ST4U$1",    # Last time assistance was received (unit)
+    "ST4U$2",    #Last time assistance was received (unit)
+    "ST4U$3",    #Last time assistance was received (unit)
+    "ST4U$4",    #Last time assistance was received (unit)
+    "ST4U$5",    #Last time assistance was received (unit)
+    "ST4N$1",    #Last time assistance was received (number)
+    "ST4N$2",    #Last time assistance was received (number)
+    "ST4N$3",    #Last time assistance was received (number)
+    "ST4N$4",    #Last time assistance was received (number)
+    "ST4N$5",    #Last time assistance was received (number)
+    
+    # Turkmenistan
+    "ST6U$1",    # Last time assistance (State allowance for childcare) was received (unit)
+    "ST6U$2",    # Last time assistance (State allowance on disability) was received (unit)
+    "ST6U$3",    # Last time assistance (State social benefit) was received (unit)
+    "ST6U$4",    # Last time assistance (Any retirement pension) was received (unit)
+    "ST6U$5",    # Last time assistance (Any other external assistance programme) was received (unit)
+    "ST6N$1",    # Last time assistance (State allowance for childcare) was received (number)
+    "ST6N$2",    # Last time assistance (State allowance on disability) was received (number)
+    "ST6N$3",    # Last time assistance (State social benefit) was received (number)
+    "ST6N$4",    # Last time assistance (Any retirement pension) was received (number)
+    "ST6N$5",    # Last time assistance (Any other external assistance programme) was received (number)
     
     # ECDI2030 (numeration of variables varies for Uzbekistan and Kyrgyzstan)
     # Health domain
@@ -96,6 +114,7 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "EC26", "EC27", "EC28", "EC29", "EC30", "EC31", "EC32", "EC33", "EC34", "EC35", "EC36", "EC37", "EC38", "EC39", "EC40",
     
     # Outcome variables - Childcare arrangement
+    "ED4",        # Ever attended school or any early childhood education programme (hl)
     "UB6",        # Has child ever attended any early childhood education programme (Yes/No)
     "UB7",        # Did child attend programme since September [year] (Yes/No)
     "UB8",        # Currently attending early childhood education programme
@@ -169,6 +188,11 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
   }}
   cleaned_dataset <- dataset %>%
     select(all_of(actual_col_names))
+  
+  if ("HL5M" %in% dataset_cols){ # if dataset is HL 
+    cleaned_dataset <- cleaned_dataset %>%
+      select(-ED5A)
+  }
   
   return(cleaned_dataset)
 }
