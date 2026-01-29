@@ -44,15 +44,9 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     # Parent Values, Beliefs, & Definitions - Child discipline
     "UCD2A",      # Took away privileges/forbade something child liked (Yes/No)
     "UCD2B",      # Explained why child's behavior was wrong (Yes/No)
-    "UCD2C",      # Shook child (Yes/No)
     "UCD2D",      # Shouted, yelled at, or screamed at child (Yes/No)
     "UCD2E",      # Gave child something else to do (Yes/No)
-    "UCD2F",      # Spanked, hit, or slapped child on bottom with bare hand (Yes/No)
-    "UCD2G",      # Hit child on bottom or elsewhere with object (Yes/No)
     "UCD2H",      # Called child dumb, lazy or another name like that (Yes/No)
-    "UCD2I",      # Hit or slapped child on face, head, or ears (Yes/No)
-    "UCD2J",      # Hit or slapped child on hand, arm, or leg (Yes/No)
-    "UCD2K",      # Beat child up (hit over and over as hard as one could) (Yes/No)
     
     # Early stimulation and responsive care
     grep("^EC5A", names(dataset), value = TRUE),       # Reading books or looking at picture books with child (Yes/No/DK)
@@ -148,15 +142,9 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     # Child discipline / parental behavior (past month)
     "HCDI3A",     # Took away privileges or forbade something child liked
     "HCDI3B",     # Explained why child's behaviour was wrong
-    "HCDI3C",     # Shook the child
     "HCDI3D",     # Shouted, yelled, or screamed at the child
     "HCDI3E",     # Gave child something else to do
-    "HCDI3F",     # Spanked, hit, or slapped child with bare hand
-    "HCDI3G",     # Hit child with object (belt, stick, etc.)
-    "HCDI3H",     # Called child dumb, lazy, or similar
-    "HCDI3I",     # Hit or slapped child on face, head, or ears
-    "HCDI3J",     # Hit or slapped child on hand, arm, or leg
-    "HCDI3K"      # Beat child up repeatedly as hard as possible
+    "HCDI3H"     # Called child dumb, lazy, or similar
   )
 
   target_vars <- if (survey == "MICS") mics_vars else dhs_vars

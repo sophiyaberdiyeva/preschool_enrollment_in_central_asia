@@ -10,7 +10,6 @@ output:
     lightbox: true
     gallery: true
     highlight: tango
-    toc_depth: 6
 ---
 ```{=html}
 <style>
@@ -39,7 +38,9 @@ set.seed(42)
 
 **GitHub link**: https://github.com/sophiyaberdiyeva/preschool_enrollment_in_central_asia
 
-#  1. Loading the preprocessed data
+# 1. Data exploration
+
+### 1.1. Loading the preprocessed individual data
 
 Pre-processing included the following steps *(in the back end)*:
 
@@ -65,7 +66,7 @@ tajikistan_dhs <- preprocess_dhs_data(child_set_path = "data/raw/Tajikistan/TJKR
                                   house_members_path = "data/raw/Tajikistan/TJPR81SV_household_member_recode/TJPR81FL.sav")
 ```
 
-### Loading region-level data
+### 1.2. Loading region-level data
 
 ```{r, message=FALSE}
 region_kz <- read_csv("../data/raw/regional_data_Kazakhstan_2024.csv")
@@ -133,7 +134,7 @@ cat('</div>')
 table(kyrgyzstan_mics$UB7, kyrgyzstan_mics$UB2)
 ```
 
-* For Kyrgyzstan and Uzbekistan, number of variables is way higher (92-93 compared to 66) due to the data encoding specifics: some of the variables that had to be recoded based on sub-items and provided as separate features ("EC5[A-D]") are missing, creating the neccessity for us to perform this recoding on our own.
+* For Kyrgyzstan and Uzbekistan, number of variables is way higher (86-87 compared to 60) due to the data encoding specifics: some of the variables that had to be recoded based on sub-items and provided as separate features ("EC5[A-D]") are missing, creating the neccessity for us to perform this recoding on our own.
 
 * This dataset has shifted enumeration of early childhood (EC) development variables.
 
@@ -236,7 +237,7 @@ table(tajikistan_dhs$HV121.x, tajikistan_dhs$V024)
 
 * Since Tajikistan data originate from DHS, they have completely different variable naming system.
 
-* Among all variables related to child discipline (HCDI3[A-K]), 24 values are missing. Respective rows will be later omitted.
+* Among all variables related to child discipline (HCDI3[A-H]), 24 values are missing. Respective rows will be later omitted.
 
 * There is one very concerning issue and one minor with the main outcome variable:
  
@@ -262,10 +263,11 @@ For having a quick look at associations between variables, we performed the foll
 
 ### Individual level
 
-```{r}
+```{r, warning=F}
 
 results <- pairwise_chi_cramers_parallel(
-  kazakhstan_mics[,-c(1,2,3,4,5,6,7,53,54,59,60,62)], n_cores = 4, p_threshold = 0.05, use_bonferroni = TRUE)
+  kazakhstan_mics[,-c(1,2,3,4,5,6,7,47,48, 53,56)], n_cores = 4, p_threshold = 0.05, use_bonferroni = FALSE)
+
 
 # Get summary
 summary_stats(results)
@@ -275,21 +277,21 @@ plot <- plot_cramers_heatmap(results)
 print(plot)
 
 # View top associations
-top_40 <- get_top_associations(results, n = 40)
-print(top_40)
+top_20 <- get_top_associations(results, n = 20)
+print(top_20)
 ```
 
-As we can observe, only fourty (unique) pairs had associations strength higher than 0.5:
+As we can observe, only 40 (unique) pairs had associations strength higher than 0.5:
 
 * EC2[A-C] (presence of playthings) seem to be associated with the variables corresponding to the components of Early Childhood Development Index 2030 (ECDI2030, variables EC6-EC25).
 
-* As expected, items measuring one phenomena are associated with each other: we can see clear colored clusters for Child Discipline (and violence) UCD2[A-K] group of variables, for playthings materials EC2[A-C], EC5[A-F] - early stimulation and responsive care set, and the most clear one for the EC6-EC25, i.e. ECDI2030. All of these groups will be consolidated later, so these associations should not be problematic.
+* As expected, items measuring one phenomena are associated with each other: we can see clear colored clusters for Child Discipline UCD2[A-H] group of variables, for playthings materials EC2[A-C], EC5[A-F] - early stimulation and responsive care set, and the most clear one for the EC6-EC25, i.e. ECDI2030. All of these groups will be consolidated later, so these associations should not be problematic.
 
 * There is a weak association between HH7 - region of the household, and the majority of variables, which is nicely justifying our usage of multilevel modeling.
 
-* HH48 (number of household members) seems to be associated with other household characteristics like number of children under 5 (HH51), wealth (windex5), having vehicles like a motorcycle or a car, and mother/father of the child living in the household (HL13/HL17, respectively).
+* HH48 (number of household members) seems to be associated with other household characteristics like number of children under 5 (HH51), wealth (windex5), having vehicles like a motorcycle or a car, and mother/father of the child living in the household (HL13/HL17, respectively), and also with early stimulation and responsive care (EC5[A-F]).
 
-* **The most concerning finding: few (just 4, without any household-related features) pairwise associations between target variable "UB8" and the rest of predictors**. If this will also be the reflected in the multilevel modelling results, we will consider selecting out the component items and using them instead of composite scores (e.g. separate early childhood development items instead of ECDI2030).
+* **The most concerning finding: few (just 9, without any household-related features) pairwise associations between target variable "UB8" and the rest of predictors**. If this will also be the reflected in the multilevel modelling results, we will consider selecting out the component items and using them instead of composite scores (e.g. separate early childhood development items instead of ECDI2030).
 
 ### Regional level (n=20)
 
