@@ -5,7 +5,7 @@
 
 # Function to create a correlation-style plot (clustering similar variables)
 
-plot_cramers_clustered <- function(results) {
+plot_cramers_clustered <- function(results, text_size=7) {
   
   # Replace NA with 0 for clustering
   cramers_for_clustering <- results$cramers_v
@@ -47,8 +47,8 @@ plot_cramers_clustered <- function(results) {
       x = "", y = ""
     ) +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 7),
-      axis.text.y = element_text(size = 7),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = text_size),
+      axis.text.y = element_text(size = text_size),
       plot.title = element_text(hjust = 0.5, face = "bold"),
       plot.subtitle = element_text(hjust = 0.5, size = 9),
       legend.position = "right",
@@ -450,4 +450,41 @@ plot_cramers_heatmap <- function(results, title = "Cramer's V for Significant As
   }
   
   return(p)
+}
+
+# allow.new.levels = TRUE handles regions in test not seen in train
+predict_prob <- function(model, newdata) {
+  predict(model, newdata = newdata, type = "response", allow.new.levels = TRUE)
+}
+
+compute_metrics <- function(probs, actual, model_name, threshold = 0.5) {
+  
+  pred_class <- factor(ifelse(probs >= threshold, 1, 0), levels = c(0, 1))
+  actual_f   <- factor(actual, levels = c(0, 1))
+  
+  # Confusion matrix
+  cm  <- confusionMatrix(pred_class, actual_f, positive = "1")
+  
+  # AUC
+  roc_obj <- roc(actual, probs, quiet = TRUE)
+  
+  # Brier score (mean squared error of probabilities)
+  brier <- mean((probs - actual)^2)
+  
+  # Log loss
+  eps <- 1e-15
+  probs_clip <- pmax(pmin(probs, 1 - eps), eps)
+  logloss <- -mean(actual * log(probs_clip) + (1 - actual) * log(1 - probs_clip))
+  
+  tibble::tibble(
+    Model       = model_name,
+    AUC         = as.numeric(auc(roc_obj)),
+    Accuracy    = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],   # Recall / TPR
+    Specificity = cm$byClass["Specificity"],
+    PPV         = cm$byClass["Pos Pred Value"], # Precision
+    F1          = cm$byClass["F1"],
+    Brier       = brier,
+    LogLoss     = logloss
+  )
 }

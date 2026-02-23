@@ -19,6 +19,7 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "HL1",        # Line number in household members set
     # Parent & Child characteristics
     "UB2",        # Age of child (in completed years)
+    "CAGE",       # Age of child (in months)
     "HH6",        # Area: Urban(1)/Rural(2)
     "HH48",       # Total number of household members
     "HH51",       # Total number of children under age 5
@@ -325,6 +326,230 @@ preprocess_dhs_data <- function(child_set_path,
   
   return(final_joined)
 }
+
+# Dimensionality reduction
+# Learning materials
+recode_playthings <- function(df, books_var, playthings_vars) {
+  
+  # Create a working copy
+  df_recoded <- df
+  
+  # Recode number_of_books variable
+  # 1 if >= 3 books, 0 if < 3 or no response (99)
+  df_recoded[[books_var]] <- ifelse(df_recoded[[books_var]] >= 3 & 
+                                      df_recoded[[books_var]] != 99, 1, 0)
+  
+  # Recode playthings variables
+  # 1 if "YES" (value 1), 0 for all others
+  for (col in playthings_vars) {
+    df_recoded[[col]] <- ifelse(df_recoded[[col]] == 1, 1, 0)
+  }
+  
+  # Calculate sum of recoded playthings variables
+  df_recoded$playthings_sum <- rowSums(df_recoded[, playthings_vars], na.rm = TRUE)
+  
+  # Create two_plus_playthings variable
+  # 1 if sum >= 2, 0 otherwise
+  df_recoded$two_plus_playthings <- ifelse(df_recoded$playthings_sum >= 2, 1, 0)
+  
+  return(df_recoded)
+}
+
+# Inadequate supervision
+recode_supervision <- function(df, supervision_vars) {
+  # Create a working copy
+  df_recoded <- df
+  
+  # Create supervised_inadequately variable
+  # 1 if ANY supervision variable is not equal to 0, 0 if ALL are 0
+  df_recoded$supervised_inadequately <- ifelse(
+    rowSums(df_recoded[, supervision_vars] != 0, na.rm = TRUE) > 0,
+    1,
+    0
+  )
+  
+  return(df_recoded)
+}
+
+# Child discipline - psychological aggression
+recode_psy_aggression <- function(df, var1, var2) {
+  # Create a working copy
+  df_recoded <- df
+  
+  # Create psy_aggression variable
+  # 1 if either var1 or var2 equals 1, 0 otherwise
+  df_recoded$psy_aggression <- ifelse(
+    df_recoded[[var1]] == 1 | df_recoded[[var2]] == 1,
+    1,
+    0
+  )
+  
+  return(df_recoded)
+}
+
+
+# Early stimulation and responsive care
+recode_early_stimulation <- function(df, stimulation_vars) {
+  # Create a working copy
+  df_recoded <- df
+  
+  # Count how many variables equal 1 (YES) in each row
+  yes_count <- rowSums(df_recoded[, stimulation_vars] == 1, na.rm = TRUE)
+  
+  # Create early_stimulation variable
+  df_recoded$early_stimulation <- ifelse(yes_count >= 4, 1, 0)
+  
+  return(df_recoded)
+}
+
+# Extended version
+recode_early_stimulation_v2 <- function(df, activity_prefixes) {
+  # Create a working copy
+  df_recoded <- df
+  
+  # For each row, count how many activities had at least one person do them
+  activity_done_matrix <- sapply(activity_prefixes, function(prefix) {
+    # Get all variables for this activity
+    activity_vars <- grep(paste0("^", prefix), names(df_recoded), value = TRUE)
+    
+    # Exclude NO RESPONSE and NO ONE variables
+    person_vars <- setdiff(activity_vars, 
+                           c(paste0(prefix, "NR"), 
+                             paste0(prefix, "Y")))
+    
+    # Check if ANY person variable has a non-empty value for each row
+    apply(df_recoded[, person_vars, drop = FALSE], 1, function(row) {
+      any(!is.na(row) & row != "" & row != "?")
+    })
+  })
+  
+  # Count activities per row
+  activity_count <- rowSums(activity_done_matrix, na.rm = TRUE)
+  
+  # Create early_stimulation variable
+  df_recoded$early_stimulation <- ifelse(activity_count >= 4, 1, 0)
+  
+  return(df_recoded)
+}
+
+# ECDI2030
+recode_ecdi_and_track <- function(df, age_col, ec_regular, ec_frequency, ec_comparison) {
+
+    # Create a working copy
+  df_recoded <- df
+  
+  # Recode regular components
+  # Values of 1 stay as 1, all others become 0
+  for (col in ec_regular) {
+    df_recoded[[col]] <- ifelse(df_recoded[[col]] == 1, 1, 0)
+  }
+  
+  # Recode frequency variable
+  # 0 for "DAILY" (value 1), 1 for all others
+  df_recoded[[ec_frequency]] <- ifelse(df_recoded[[ec_frequency]] == 1, 0, 1)
+
+  # Recode comparison variable
+  # 0 for "MORE" (value 4) and "A LOT MORE" (value 5), 1 for all others
+
+  df_recoded[[ec_comparison]] <- ifelse(df_recoded[[ec_comparison]] %in% c(4, 5), 0, 1)
+  
+  # Calculate sum of all recoded components
+  all_ec_cols <- c(ec_regular, ec_frequency, ec_comparison)
+  df_recoded$ecdi_sum <- rowSums(df_recoded[, all_ec_cols], na.rm = TRUE)
+  
+  # Create dev_on_track variable based on age ranges and thresholds
+  df_recoded$dev_on_track <- case_when(
+    df_recoded[[age_col]] >= 36 & df_recoded[[age_col]] <= 41 ~ 
+      ifelse(df_recoded$ecdi_sum >= 11, 1, 0),
+    df_recoded[[age_col]] >= 42 & df_recoded[[age_col]] <= 47 ~ 
+      ifelse(df_recoded$ecdi_sum >= 13, 1, 0),
+    df_recoded[[age_col]] >= 48 & df_recoded[[age_col]] <= 59 ~ 
+      ifelse(df_recoded$ecdi_sum >= 15, 1, 0),
+    TRUE ~ NA_real_  # Ages outside specified ranges get NA
+  )
+  
+  return(df_recoded)
+}
+
+# Social transfers
+recode_economic_assistance <- function(df, unit_base, number_base, n_programs = 5, months_threshold = 3) {
+  # Create a working copy
+  df_recoded <- df
+  
+  # Initialize a variable to track if any assistance was received in last 3 months
+  received_recent_assistance <- rep(0, nrow(df_recoded))
+  
+  # Loop through each program type (1 to n_programs)
+  for (i in 1:n_programs) {
+    # Construct variable names
+    unit_var <- paste0(unit_base, i)
+    number_var <- paste0(number_base, i)
+    
+    # Check if variables exist in the dataframe
+    if (unit_var %in% names(df_recoded) && number_var %in% names(df_recoded)) {
+      
+      # Extract values
+      units <- df_recoded[[unit_var]]
+      numbers <- df_recoded[[number_var]]
+      
+      # Determine if assistance was received in last X months
+      # Logic:
+      # - If unit = 1 (MONTHS AGO) and number <= months_threshold: YES
+      # - If unit = 2 (YEARS AGO): NO (too long ago)
+      # - If unit = 9 (DK/NO RESPONSE) or number = 98/99: NO
+      
+      recent_assistance <- (
+        !is.na(units) & 
+          !is.na(numbers) & 
+          units == 1 &                    # MONTHS AGO
+          numbers <= months_threshold &   # Within threshold
+          numbers != 98 &                 # Not DK
+          numbers != 99                   # Not NO RESPONSE
+      )
+      
+      # Update the overall indicator
+      # If ANY program shows recent assistance, mark as 1
+      received_recent_assistance <- received_recent_assistance | recent_assistance
+    }
+  }
+  
+  # Create the binary variable
+  df_recoded$received_econ_assist <- as.integer(received_recent_assistance)
+  
+  return(df_recoded)
+}
+
+
+# Sampling one child in a household
+sample_one_per_group <- function(df, group_var, seed = NULL) {
+  # Set seed if provided
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+  
+  # Group by the variable and sample one row from each group
+  df_sampled <- df %>%
+    group_by(across(all_of(group_var))) %>%
+    slice_sample(n = 1) %>%
+    ungroup()
+  
+  return(df_sampled)
+}
+
+grand_mean_centering <- function(df, level2_vars) {
+
+  df_centered <- df
+  
+  for (var in level2_vars) {
+    if (var %in% names(df)) {
+      df_centered[[paste0(var, "_c")]] <- 
+        df_centered[[var]] - mean(df_centered[[var]], na.rm = TRUE)
+    }
+  }
+  
+  return(df_centered)
+}
+
 
 # kazakhstan <- get_and_preprocess_mics_data("Kazakhstan")
 # kyrgyzstan <- get_and_preprocess_mics_data("Kyrgyzstan")
