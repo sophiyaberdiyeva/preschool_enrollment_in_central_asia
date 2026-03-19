@@ -12,7 +12,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, cache=T)
+knitr::opts_chunk$set(echo = TRUE, cache=T, warning = F)
 htmlwidgets::setWidgetIdSeed(123)
 
 source(here::here("R", "00_load_packages.R"))
@@ -20,6 +20,41 @@ source(here::here("R", "01_data_cleaning.R"))
 source(here::here("R", "02_descriptives.R"))
 set.seed(42)
 ```
+
+# What a reader might need to know about the modeling process
+
+## Pipeline
+
+The development of models and variable selection was following the logic below:
+
+1. First, we run a null model to check whether multilevel approach is justified at all
+
+2. Next, we run a model with the most exhaustive list of predictors that are shared accross countries' datasets, called a "model for pooling". This model is run through anova to see whether it fits the data significantly better than the null model.
+
+3. After that, we do a little robustness check, running (almost) the same model for pooling through the regular logistic regression rather than multilevel one.
+
+4. Then, we include all variables available for the country (that are of our interest) into a "full" model and check whether it is significantly different in prediction than a model for pooling.
+
+5. Also, we are tracking r^2 and collinearity metrics all way along.
+
+6. As a next step, we remove all non-significant variables from a full model, calling this model "model_sign", and based on it, conduct some questionable experiments with interactions and random slopes and call it 'model_extra'
+
+7. Finally, we are actually doing some machine learning-style performance evaluation of all of the models, preserving the formulas, but re-training them on randomly (but within stratas) split  data.
+
+## Key takeaways for Kyrgyzstan
+
+- One model failed to converge
+
+- Multilevel modeling for Kyrgyzstan is well-justified: ICC = 0.114 (a lot higher than 0.05)
+
+- Robustness check shows slightly unstable results for rural/urban location.
+
+- Again, full model scored highest in performance (accuracy 0.701, precision 0.650, see further [metrics](#performance-comparison-table)).
+
+- Significant variables were: child's age in months [+], caregiver's education [+], number of books in the household [+], natural mother lives in this household [+], household wealth index quintile [+], total population of the region [-], number of preschool facilities in the region [+].
+
+- R-squared has reached 0.242, which is low (but could always be worse). See a model comparison [table](#model-comparison-table) 
+
 
 # Loading data
 
@@ -58,12 +93,16 @@ kyrgyzstan_mics <- kyrgyzstan_mics %>%
                         ec_frequency = "EC39",
                         ec_comparison = "EC40") %>% 
   mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+
   
   # Social transfers
   recode_economic_assistance(unit_base = "ST4U$",
                                           number_base = "ST4N$",
                                           n_programs = 5,
                                           months_threshold = 3) %>% 
+  # Caregiver's education
+  recode_education_scheme("ED5A", "KG") %>% 
   
   # Exclude children under 3
   filter(CAGE>35) %>% 
@@ -168,6 +207,7 @@ model_for_pooling <- glmer(
     HL13 + # Natural mother lives in the household
     HL17 + # Natural father lives in the household
     windex5 +
+    HC10E + # Family has a car
     
     # Level 2 predictors (structure)
     popul_mln_total_01012023 +
@@ -223,6 +263,7 @@ model_fe_region <- glm(
     HL13 + # Natural mother lives in the household
     HL17 + # Natural father lives in the household
     windex5 +
+    HC10E + # Family has a car
     
     # Level 2 predictors (structure)
     popul_mln_total_01012023 +
@@ -235,8 +276,8 @@ model_fe_region <- glm(
 
 modelsummary(
   list(
-    "Random Intercept" = model_for_pooling,
-    "Region Fixed Effects" = model_fe_region
+    "Multilevel model" = model_for_pooling,
+    "Region Fixed Effects Model" = model_fe_region
   ),
   exponentiate = TRUE
 )
@@ -262,6 +303,7 @@ model_full <- glmer(
     HL13 + # Natural mother lives in the household
     HL17 + # Natural father lives in the household
     windex5 +
+    HC10E + # Family has a car
     
     # Level 2 predictors (structure)
     popul_mln_total_01012023 +
@@ -381,10 +423,9 @@ anova(model_sign, model_extra)
 check_collinearity(model_extra)
 r2(model_extra)
 ```
+# Model comparison table
 
 ```{r}
-# MODEL COMPARISON TABLE: All models side by side
-
 modelsummary(
   list(
     "Null"         = model_null,
@@ -401,7 +442,7 @@ modelsummary(
 )
 ```
 
-```{r eval=F}
+```{r}
 # Plots
 # Coefficient plot (OR forest plot) for model_sign
 
@@ -419,7 +460,7 @@ coef_df <- tidy(model_sign, effects = "fixed", conf.int = TRUE, exponentiate = T
 
 p_coef <- ggplot(coef_df, aes(x = estimate, y = reorder(term, estimate), color = sig)) +
   geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
-  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
   geom_point(size = 3) +
   scale_color_manual(
     values = c("p < .001" = "#d73027", "p < .01" = "#f46d43",
@@ -471,36 +512,30 @@ print(p_ame)
 
 
 #  Predicted probabilities for key predictors
-pred_ed5a <- ggpredict(model_sign, terms = "ED5A")
+pred_ed5a <- ggpredict(model_sign, terms = "ED5A [all]", bias_correction = TRUE)
 p_ed5a <- plot(pred_ed5a) +
   labs(title = "Predicted Probability by Mother's Education (ED5A)",
        x = "Education Level", y = "Pr(UB8 = 1)") +
-  theme_bw(base_size = 12)
+  theme_bw(base_size = 12)+
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
 
-pred_windex <- ggpredict(model_sign, terms = "windex5")
+pred_windex <- ggpredict(model_sign, terms = "windex5 [all]", bias_correction = TRUE)
 p_windex <- plot(pred_windex) +
   labs(title = "Predicted Probability by Wealth Index",
        x = "Wealth Index (windex5)", y = "Pr(UB8 = 1)") +
   theme_bw(base_size = 12)
 
-# For interaction in model_extra: ED5A * labor_women
-pred_interaction <- ggpredict(model_extra, terms = c("ED5A", "labor_women"))
-p_interaction <- plot(pred_interaction) +
-  labs(title = "Interaction: Mother's Education × Women's Labour Force Participation",
-       x = "Education Level", y = "Pr(UB8 = 1)", color = "Labor (women)") +
-  theme_bw(base_size = 12)
-
 print(p_ed5a)
 print(p_windex)
-print(p_interaction)
+```
 
-
+```{r}
 #  4. Random effects (regional variation) 
-re_df <- ranef(model_sign, condVar = TRUE)$region_mics %>%
+re_df <- ranef(model_sign, condVar = TRUE)$region %>%
   tibble::rownames_to_column("region") %>%
   rename(intercept = `(Intercept)`) %>%
   mutate(
-    se = sqrt(attr(ranef(model_sign, condVar = TRUE)$region_mics, "postVar")[1, 1, ]),
+    se = sqrt(attr(ranef(model_sign, condVar = TRUE)$region, "postVar")[1, 1, ]),
     lower = intercept - 1.96 * se,
     upper = intercept + 1.96 * se
   )
@@ -550,12 +585,16 @@ model_list <- list(
 
 r2_df <- purrr::map_dfr(names(model_list), function(nm) {
   r2_vals <- r2(model_list[[nm]])
-  icc_val <- performance::icc(model_list[[nm]])$ICC_adjusted
+  icc_result <- tryCatch(
+    performance::icc(model_list[[nm]])$ICC_adjusted,
+    error = function(e) NA_real_
+  )
+  
   tibble::tibble(
     model        = nm,
     R2_marginal  = r2_vals$R2_marginal,
     R2_conditional = r2_vals$R2_conditional,
-    ICC          = icc_val
+    ICC          = icc_result
   )
 }) %>%
   tidyr::pivot_longer(-model, names_to = "metric", values_to = "value") %>%
@@ -579,16 +618,9 @@ p_r2 <- ggplot(r2_df, aes(x = model, y = value, fill = metric)) +
 
 print(p_r2)
 
-
-# Combined layout for report 
-(p_coef | p_ame) / (p_ed5a | p_windex) / p_r2 +
-  plot_annotation(
-    title   = "kyrgyzstan — Multilevel Model Results",
-    caption = "MICS data; UB8 outcome; glmer with binomial logit link"
-  )
 ```
 
-# Model comparison
+# Model predictive performance comparison
 
 ```{r}
 # Splitting data
@@ -632,8 +664,11 @@ metrics_df <- purrr::map2_dfr(
   ~ compute_metrics(.x, as.numeric(as.character(test_df$UB8)), .y)
 )
 
-# Comparison table
+```
 
+# Performance comparison table
+
+```{r}
 metrics_df %>%
   mutate(across(where(is.numeric), ~ round(.x, 3))) %>%
   gt::gt() %>%
@@ -653,7 +688,7 @@ metrics_df %>%
   gt::tab_style(
     style = gt::cell_fill(color = "#d4edda"),
     locations = gt::cells_body(
-      rows = AUC == max(AUC)
+      rows = Accuracy == max(Accuracy)
     )
   )
 

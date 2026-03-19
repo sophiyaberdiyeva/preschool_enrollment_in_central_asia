@@ -1,0 +1,616 @@
+---
+title: "Pooled model for all countries"
+author: "Berdiyeva Sofiya"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: true
+    highlight: tango
+---
+
+# Pipeline
+
+We ran and assessed the performance of one pooled model.
+
+# Key takeaways
+
+- Both country and region-level groupings are justified (ICC>0.05)
+
+- Significant predictors: child's age in months [+], caregiver's education [+], number of books in the household [+], having more than 2 playthings [-], child being developmentally on track [+], location in rural area [-], household size [-], household wealth index quintile [+], car presence [-].
+
+- Kazakhstan has the highest intercept, which is consistent with the highest enrollment rates in the region.
+
+- Model accuracy is 0.712.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=T)
+htmlwidgets::setWidgetIdSeed(123)
+
+source(here::here("R", "00_load_packages.R"))
+source(here::here("R", "01_data_cleaning.R"))
+source(here::here("R", "02_descriptives.R"))
+set.seed(42)
+```
+
+# Loading country data
+
+## Kazakhstan
+
+```{r}
+# Indiv-level data
+kazakhstan_mics <- get_and_preprocess_mics_data("Kazakhstan")
+
+# Region-level data
+region_kz <- read_csv("../data/raw/regional_data_Kazakhstan_2024.csv")
+```
+
+### Preprocessing individual level data 
+
+#### Dimensionality reduction
+
+```{r}
+kazakhstan_mics <- kazakhstan_mics %>% 
+  
+  # Learning materials
+  recode_playthings(books_var = "EC1",
+                    playthings_vars = c("EC2A", "EC2B", "EC2C")) %>% 
+  
+  # Inadequate supervision
+  recode_supervision(supervision_vars = c("EC3A", "EC3B")) %>% 
+  
+  # Child discipline - psychological aggression
+  recode_psy_aggression(var1 = "UCD2D", var2 = "UCD2H") %>% 
+  
+  # Early stimulation and responsive care
+  recode_early_stimulation(stimulation_vars = c("EC5A", "EC5B", "EC5C",
+                                                "EC5D", "EC5E", "EC5F")) %>% 
+  
+  # ECDI
+  recode_ecdi_and_track(age_col = "CAGE",
+                        ec_regular = paste0("EC", 6:23),
+                        ec_frequency = "EC24",
+                        ec_comparison = "EC25") %>% 
+  mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+
+  # Caregiver's education
+  recode_education_scheme("ED5A", "KZ") %>% 
+  
+  # Sample one child from household
+  sample_one_per_group(group_var = "house_index",
+                       seed = 42) %>% 
+
+  # Omit rows with missing values for key predictors
+  filter_at(vars(ED5A, HL13, HL17), all_vars(!is.na(.)))
+```
+
+#### Imputation
+
+```{r}
+kazakhstan_mics$UB8[is.na(kazakhstan_mics$UB8)] <- 0
+```
+
+### Combining data for multilevel modeling
+
+```{r}
+# If we decide to grand-center anything
+region_kz <- region_kz %>%
+  # Log-transform to compress the scale
+  mutate(places_in_pre_total = places_in_pre_total/1000,
+         popul_total_01012024 = popul_total_01012024/1000000,
+         pre_teachers_total_2024 = pre_teachers_total_2024/100)
+region_kz <- grand_mean_centering(region_kz, colnames(region_kz)[-c(1:3)])
+region_kz <- region_kz %>%
+  # Log-transform to compress the scale
+  mutate(popul_density_log = log(popul_density),
+         total_pre_2024_log = log(total_pre_2024))
+
+kaz_df <- kazakhstan_mics %>%
+  mutate(region_mics = as.character(as_factor(HH7))) %>% 
+  left_join(region_kz,
+            by = "region_mics",
+            keep = FALSE)
+```
+
+## Kyrgyzstan
+
+```{r}
+# Indiv-level data
+kyrgyzstan_mics <- get_and_preprocess_mics_data("Kyrgyzstan")
+
+# Region-level data
+region_kg <- read_csv("../data/raw/regional_data_Kyrgyzstan_2023.csv")
+```
+
+### Preprocessing individual level data 
+
+#### Dimensionality reduction
+
+```{r}
+kyrgyzstan_mics <- kyrgyzstan_mics %>% 
+  
+  # Learning materials
+  recode_playthings(books_var = "EC1",
+                    playthings_vars = c("EC2A", "EC2B", "EC2C")) %>% 
+  
+  # Inadequate supervision
+  recode_supervision(supervision_vars = c("EC3A", "EC3B")) %>% 
+  
+  # Child discipline - psychological aggression
+  recode_psy_aggression(var1 = "UCD2D", var2 = "UCD2H") %>% 
+  
+  # Early stimulation and responsive care
+  recode_early_stimulation_v2(
+    activity_prefixes = c("EC5A", "EC5B", "EC5C", "EC5D", "EC5E", "EC5F")) %>% 
+  
+  # ECDI
+  recode_ecdi_and_track(age_col = "CAGE",
+                        ec_regular = paste0("EC", 21:38),
+                        ec_frequency = "EC39",
+                        ec_comparison = "EC40") %>% 
+  mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+  
+  # Social transfers
+  recode_economic_assistance(unit_base = "ST4U$",
+                                          number_base = "ST4N$",
+                                          n_programs = 5,
+                                          months_threshold = 3) %>% 
+  # Caregiver's education
+  recode_education_scheme("ED5A", "KG") %>% 
+  
+  # Exclude children under 3
+  filter(CAGE>35) %>% 
+  
+  # Sample one child from household
+  sample_one_per_group(group_var = "house_index",
+                       seed = 42) %>% 
+
+  # Omit rows with missing values for key predictors
+  filter_at(vars(ED5A, HL13, HL17), all_vars(!is.na(.)))
+```
+
+#### Imputation
+
+```{r}
+kyrgyzstan_mics$UB8[is.na(kyrgyzstan_mics$UB8)] <- 0
+```
+
+### Combining data for multilevel modeling
+
+```{r}
+# If we decide to grand-center anything
+region_kg <- region_kg %>%
+  # Log-transform to compress the scale
+  mutate(popul_mln_total_01012023 = popul_thsnd_total_01012023/1000)
+region_kg <- grand_mean_centering(region_kg, colnames(region_kg)[-c(1:2)])
+region_kg <- region_kg %>%
+  # Log-transform to compress the scale
+  mutate(popul_density_log = log(popul_density),
+         total_pre_2023_log = log(total_pre_2023),
+         expen_on_pre_2023_log = log(expen_on_pre_2023))
+
+kgz_df <- kyrgyzstan_mics %>%
+  mutate(region_mics = as.character(as_factor(HH7))) %>% 
+  left_join(region_kg,
+            by = "region_mics",
+            keep = FALSE)
+```
+
+## Turkmenistan
+
+```{r}
+# Indiv-level data
+turkmenistan_mics <- get_and_preprocess_mics_data("Turkmenistan")
+
+# Region-level data
+region_tm <- read_csv("../data/raw/regional_data_Turkmenistan_2024.csv")
+```
+
+### Preprocessing individual level data 
+
+#### Dimensionality reduction
+
+```{r}
+turkmenistan_mics <- turkmenistan_mics %>% 
+  
+  # Learning materials
+  recode_playthings(books_var = "EC1",
+                    playthings_vars = c("EC2A", "EC2B", "EC2C")) %>% 
+  
+  # Inadequate supervision
+  recode_supervision(supervision_vars = c("EC3A", "EC3B")) %>% 
+  
+  # Child discipline - psychological aggression
+  recode_psy_aggression(var1 = "UCD2D", var2 = "UCD2H") %>% 
+  
+  # Early stimulation and responsive care
+  recode_early_stimulation(stimulation_vars = c("EC5A", "EC5B", "EC5C",
+                                                "EC5D", "EC5E", "EC5F")) %>% 
+  
+  # ECDI
+  recode_ecdi_and_track(age_col = "CAGE",
+                        ec_regular = paste0("EC", 6:23),
+                        ec_frequency = "EC24",
+                        ec_comparison = "EC25") %>% 
+  mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+  
+  # Social transfers
+  recode_economic_assistance(unit_base = "ST6U$",
+                                          number_base = "ST6N$",
+                                          n_programs = 5,
+                                          months_threshold = 3) %>% 
+  # Caregiver's education
+  recode_education_scheme("ED5A", "TM") %>% 
+  
+  # Exclude children under 3
+  filter(CAGE>35) %>% 
+  
+  # Sample one child from household
+  sample_one_per_group(group_var = "house_index",
+                       seed = 42) %>% 
+
+  # Omit rows with missing values for key predictors
+  filter_at(vars(ED5A, HL13, HL17), all_vars(!is.na(.)))
+```
+
+#### Imputation
+
+```{r}
+turkmenistan_mics$UB8[is.na(turkmenistan_mics$UB8)] <- 0
+```
+
+### Combining data for multilevel modeling
+
+```{r}
+# If we decide to grand-center anything
+region_tm <- region_tm %>%
+  # Log-transform to compress the scale
+  mutate(popul_mln_total_01012025 = popul_thsnd_total_01012025/1000)
+region_tm <- grand_mean_centering(region_tm, colnames(region_tm)[-c(1:2)])
+region_tm <- region_tm %>%
+  # Log-transform to compress the scale
+  mutate(popul_density_log = log(popul_density),
+         total_pre_end_2024_log = log(total_pre_end_2024))
+
+tkm_df <- turkmenistan_mics %>%
+  mutate(region_mics = as.character(as_factor(HH7))) %>% 
+  left_join(region_tm,
+            by = "region_mics",
+            keep = FALSE)
+```
+
+## Uzbekistan
+
+```{r}
+# Indiv-level data
+uzbekistan_mics <- get_and_preprocess_mics_data("Uzbekistan")
+
+# Region-level data
+region_uz <- read_csv("../data/raw/regional_data_Uzbekistan_2022.csv")
+```
+
+### Preprocessing individual level data 
+
+#### Dimensionality reduction
+
+```{r}
+uzbekistan_mics <- uzbekistan_mics %>% 
+  
+  # Learning materials
+  recode_playthings(books_var = "EC1",
+                    playthings_vars = c("EC2A", "EC2B", "EC2C")) %>% 
+  
+  # Inadequate supervision
+  recode_supervision(supervision_vars = c("EC3A", "EC3B")) %>% 
+  
+  # Child discipline - psychological aggression
+  recode_psy_aggression(var1 = "UCD2D", var2 = "UCD2H") %>% 
+  
+  # Early stimulation and responsive care
+  recode_early_stimulation_v2(
+    activity_prefixes = c("EC5A", "EC5B", "EC5C", "EC5D", "EC5E", "EC5F")) %>% 
+  
+  # ECDI
+  recode_ecdi_and_track(age_col = "CAGE",
+                        ec_regular = paste0("EC", 21:38),
+                        ec_frequency = "EC39",
+                        ec_comparison = "EC40") %>% 
+  mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+  
+  # Social transfers
+  recode_economic_assistance(unit_base = "ST4U$",
+                                          number_base = "ST4N$",
+                                          n_programs = 5,
+                                          months_threshold = 3) %>% 
+  # Caregiver's education
+  recode_education_scheme("ED5A", "UZ") %>% 
+  
+  # Exclude children under 3
+  filter(CAGE>35) %>% 
+  
+  # Sample one child from household
+  sample_one_per_group(group_var = "house_index",
+                       seed = 42) %>% 
+
+  # Omit rows with missing values for key predictors
+  filter_at(vars(ED5A, HL13, HL17), all_vars(!is.na(.)))
+```
+
+#### Imputation
+
+```{r}
+uzbekistan_mics$UB8[is.na(uzbekistan_mics$UB8)] <- 0
+```
+
+### Combining data for multilevel modeling
+
+```{r}
+# If we decide to grand-center anything
+region_uz <- region_uz %>%
+  # Log-transform to compress the scale
+  mutate(popul_mln_total_01012022 = popul_thsnd_total_01012022/1000)
+region_uz <- grand_mean_centering(region_uz, colnames(region_uz)[-c(1:2)])
+region_uz <- region_uz %>%
+  # Log-transform to compress the scale
+  mutate(popul_density_2022_log = log(popul_density_2022),
+         total_pre_2022_log = log(total_pre_2022),
+         places_in_pre_total_2022_log = log(places_in_pre_total_2022),
+         pre_teachers_total_2022_log = log(pre_teachers_total_2022))
+
+uzb_df <- uzbekistan_mics %>%
+  mutate(region_mics = as.character(as_factor(HH7))) %>% 
+  left_join(region_uz,
+            by = "region_mics",
+            keep = FALSE)
+```
+
+# Combining all dataframes
+
+```{r}
+# Unifying variable names
+tkm_df <- tkm_df %>% rename(popul_mln_total = popul_mln_total_01012025,
+                            total_pre = total_pre_end_2024)
+uzb_df <- uzb_df %>% rename(popul_mln_total = popul_mln_total_01012022,
+                            total_pre = total_pre_2022,
+                            popul_density = popul_density_2022)
+uzb_df <- uzb_df %>%
+  rename_with(~paste0("EC", as.numeric(gsub("EC", "", .)) - 15),
+              all_of(paste0("EC", 21:40)))
+kgz_df <- kgz_df %>% rename(popul_mln_total = popul_mln_total_01012023,
+                            total_pre = total_pre_2023)
+kgz_df <- kgz_df %>%
+  rename_with(~paste0("EC", as.numeric(gsub("EC", "", .)) - 15),
+              all_of(paste0("EC", 21:40)))
+
+kaz_df <- kaz_df %>% rename(total_pre = total_pre_2024,
+                            popul_mln_total = popul_total_01012024)
+
+```
+
+
+```{r}
+datframes <- list(
+  list(df = uzb_df, country = "Uzbekistan", code = "uz"),
+  list(df = kaz_df, country = "Kazakhstan", code = "kz"),
+  list(df = kgz_df, country = "Kyrgyzstan", code = "kg"),
+  list(df = tkm_df, country = "Turkmenistan", code = "tm")
+)
+
+needed_cols <- c("UB8", "CAGE", "ED5A", "EC1", "two_plus_playthings", "supervised_inadequately", "psy_aggression", "early_stimulation", "dev_on_track", "HH6", "HH48", "HL13", "HL17", "windex5", "region", "popul_mln_total", "total_pre", "popul_density", "HC10E")
+
+combined_df <- datframes %>%
+  map_df(function(x) {
+    x$df %>%
+      select(any_of(needed_cols)) %>%  
+      mutate(country = x$country, .before = 1)
+  }) %>% 
+  mutate(total_pre_log = log(total_pre),
+         popul_density_log = log(popul_density))
+```
+
+```{r}
+# THREE-LEVEL MODEL
+# Level 1: Individual (child)
+# Level 2: Region within country
+# Level 3: Country
+
+# ---- Null model ----
+model_null_3l <- glmer(
+  UB8 ~ 1 + (1 | country/region),
+  data = combined_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+vpc_null_3l <- performance::icc(model_null_3l, by_group = TRUE)
+print(vpc_null_3l)
+# output tells the three-level structure is justified:
+# Country level (L3): ICC = 0.058 — about 6% of variance in UB8 is attributable to country-level differences. Modest but meaningful, justifying the third level.
+# Region level (L2): ICC = 0.099 — about 10% of variance is attributable to region-level clustering (this is the combined region+country variance). So regions matter more than countries for explaining variation in UB8.
+```
+
+# Main model
+
+```{r}
+model_3l <- glmer(
+UB8 ~ 
+    # Level 1 predictors (child/household)
+    CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    two_plus_playthings +
+    supervised_inadequately +
+    psy_aggression +
+    early_stimulation +
+    dev_on_track +
+    HH6 + # Rural/urban
+    HH48 + # household size
+    HL13 + # Natural mother lives in the household
+    HL17 + # Natural father lives in the household
+    windex5 +
+    HC10E + # Family has a car
+  
+      # Level 2 predictors (structure)
+    popul_mln_total +
+    popul_density_log +
+    total_pre_log +
+    # Random structure
+    (1 | country/region),
+  
+  data = combined_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+summary(model_3l, correlation = TRUE)
+
+or_model_3l  <- model_3l
+ame_model_3l <- avg_slopes(model_3l, type = "response")
+
+modelsummary(
+  list("Odds Ratios" = or_model_3l, "Marginal Effects" = ame_model_3l),
+  exponentiate = c(TRUE, FALSE),
+  statistic = "conf.int",
+  stars = TRUE,
+  output = "gt"
+)
+
+anova(model_null_3l, model_3l)
+check_collinearity(model_3l)
+r2(model_3l)
+```
+
+
+# Model assessment
+```{r}
+# ICC decomposition across levels
+icc_3l <- performance::icc(model_3l, by_group = TRUE)
+print(icc_3l)
+
+# Variance partition: how much variance at each level
+vc <- as.data.frame(VarCorr(model_3l))
+vc %>%
+  select(grp, var1, vcov, sdcor) %>%
+  mutate(
+    pct_variance = round(vcov / sum(vcov) * 100, 1)
+  ) %>%
+  print()
+```
+
+# Visualizations
+
+```{r}
+# 1. Country-level random effects
+re_country <- ranef(model_3l, condVar = TRUE)$country %>%
+  tibble::rownames_to_column("country") %>%
+  rename(intercept = `(Intercept)`) %>%
+  mutate(
+    se    = sqrt(attr(ranef(model_3l, condVar = TRUE)$country, "postVar")[1, 1, ]),
+    lower = intercept - 1.96 * se,
+    upper = intercept + 1.96 * se
+  )
+
+p_re_country <- ggplot(re_country, aes(x = intercept, y = reorder(country, intercept))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2, color = "#e41a1c") +
+  geom_point(size = 3, color = "#e41a1c") +
+  labs(
+    title = "Country-Level Random Intercepts (±1.96 SE)",
+    x     = "Random Intercept (log-odds scale)",
+    y     = NULL
+  ) +
+  theme_bw(base_size = 12)
+
+
+# ---- 2. Region-level random effects, faceted by country ----
+re_region <- ranef(model_3l, condVar = TRUE)$`region:country` %>%
+  tibble::rownames_to_column("region_country") %>%
+  rename(intercept = `(Intercept)`) %>%
+  tidyr::separate(region_country, into = c("region", "country"), sep = ":") %>%
+  mutate(
+    se    = sqrt(attr(ranef(model_3l, condVar = TRUE)$`region:country`, "postVar")[1, 1, ]),
+    lower = intercept - 1.96 * se,
+    upper = intercept + 1.96 * se
+  )
+
+p_re_region <- ggplot(re_region, aes(x = intercept, y = reorder(region, intercept))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(xmin = lower, xmax = upper), 
+              height = 0.3, color = "steelblue", alpha = 0.6,
+              orientation = "y") +
+  geom_point(size = 2, color = "steelblue") +
+  facet_wrap(~ country, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Region-Level Random Intercepts by Country (±1.96 SE)",
+    x     = "Random Intercept (log-odds scale)",
+    y     = NULL
+  ) +
+  theme_bw(base_size = 11) +
+  theme(strip.background = element_rect(fill = "#f0f0f0"))
+
+
+# ---- 3. Variance partition bar chart ----
+vc_plot <- vc %>%
+  select(grp, vcov) %>%
+  mutate(
+    grp  = recode(grp,
+      "country"             = "Country (L3)",
+      "country:region" = "Region (L2)",
+      "Residual"            = "Individual (L1)"
+    ),
+    pct = vcov / sum(vcov) * 100
+  )
+
+p_vpc <- ggplot(vc_plot, aes(x = "", y = pct, fill = grp)) +
+  geom_col(width = 0.4) +
+  geom_text(aes(label = paste0(round(pct, 1), "%")),
+            position = position_stack(vjust = 0.5), size = 4) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Variance Partition by Level",
+    x     = NULL,
+    y     = "% of Total Variance",
+    fill  = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+
+p_re_country
+p_vpc
+p_re_region
+
+```
+
+# Assessing accuracy
+
+```{r}
+set.seed(42)
+
+combined_df <- combined_df %>%
+  mutate(strata_var = paste0(country, "_", region, "_", UB8))
+
+train_idx_3l <- createDataPartition(combined_df$strata_var, p = 0.75, list = FALSE)
+train_3l     <- combined_df[train_idx_3l, ]
+test_3l      <- combined_df[-train_idx_3l, ]
+
+model_3l_train <- update(model_3l, data = train_3l)
+
+probs_3l <- predict(model_3l_train, newdata = test_3l,
+                    type = "response", allow.new.levels = TRUE)
+
+metrics_3l <- compute_metrics(
+  probs   = probs_3l,
+  actual  = as.numeric(as.character(test_3l$UB8)),
+  model_name = "Three-Level"
+)
+
+kable(metrics_3l)
+```
+

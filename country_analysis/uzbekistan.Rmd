@@ -1,0 +1,754 @@
+---
+title: "Uzbekistan MICS 2021-2022"
+author: "Berdiyeva Sofiya"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    self_contained: true
+    thumbnails: true
+    lightbox: true
+    gallery: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=T, warning = F)
+htmlwidgets::setWidgetIdSeed(123)
+
+source(here::here("R", "00_load_packages.R"))
+source(here::here("R", "01_data_cleaning.R"))
+source(here::here("R", "02_descriptives.R"))
+set.seed(42)
+```
+
+# What a reader might need to know about the modeling process
+
+## Pipeline
+
+The development of models and variable selection was following the logic below:
+
+1. First, we run a null model to check whether multilevel approach is justified at all
+
+2. Next, we run a model with the most exhaustive list of predictors that are shared accross countries' datasets, called a "model for pooling". This model is run through anova to see whether it fits the data significantly better than the null model.
+
+3. After that, we do a little robustness check, running (almost) the same model for pooling through the regular logistic regression rather than multilevel one.
+
+4. Then, we include all variables available for the country (that are of our interest) into a "full" model and check whether it is significantly different in prediction than a model for pooling.
+
+5. Also, we are tracking r^2 and collinearity metrics all way along.
+
+6. As a next step, we remove all non-significant variables from a full model, calling this model "model_sign", and based on it, conduct some questionable experiments with interactions and random slopes and call it 'model_extra'
+
+7. Finally, we are actually doing some machine learning-style performance evaluation of all of the models, preserving the formulas, but re-training them on randomly (but within stratas) split  data.
+
+## Key takeaways for Uzbekistan
+
+- Multilevel modeling is justified, since ICC perfectly passed 0.001 point over a commonly used threshold (ICC=0.051).
+
+- Robustness check shows unstable results for having more than two playthings, psychological aggression, father living in the household.
+
+- Significant model won in performance by accuracy equal to 0.624 (the lowest result across countries), see further [metrics](#performance-comparison-table)), and included the variables: child's age in months [+], caregiver's education [+], number of books in the household [+], having more than two playthings [-], car presence [+]. None of the structural predictors were significant.
+
+- Highest conditional R-squared reached 0.169 (See a model comparison [table](#model-comparison-table))
+
+
+# Loading data
+
+```{r}
+# Indiv-level data
+uzbekistan_mics <- get_and_preprocess_mics_data("Uzbekistan")
+
+# Region-level data
+region_uz <- read_csv("../data/raw/regional_data_Uzbekistan_2022.csv")
+```
+
+# Preprocessing individual level data 
+
+## Dimensionality reduction
+
+```{r}
+uzbekistan_mics <- uzbekistan_mics %>% 
+  
+  # Learning materials
+  recode_playthings(books_var = "EC1",
+                    playthings_vars = c("EC2A", "EC2B", "EC2C")) %>% 
+  
+  # Inadequate supervision
+  recode_supervision(supervision_vars = c("EC3A", "EC3B")) %>% 
+  
+  # Child discipline - psychological aggression
+  recode_psy_aggression(var1 = "UCD2D", var2 = "UCD2H") %>% 
+  
+  # Early stimulation and responsive care
+  recode_early_stimulation_v2(
+    activity_prefixes = c("EC5A", "EC5B", "EC5C", "EC5D", "EC5E", "EC5F")) %>% 
+  
+  # ECDI
+  recode_ecdi_and_track(age_col = "CAGE",
+                        ec_regular = paste0("EC", 21:38),
+                        ec_frequency = "EC39",
+                        ec_comparison = "EC40") %>% 
+  mutate(UB8=if_else(UB8==1, 1,0)) %>% 
+  mutate(HC10E=if_else(HC10E==1, 1,0)) %>% 
+
+  
+  # Social transfers
+  recode_economic_assistance(unit_base = "ST4U$",
+                                          number_base = "ST4N$",
+                                          n_programs = 5,
+                                          months_threshold = 3) %>% 
+  # Caregiver's education
+  recode_education_scheme("ED5A", "UZ") %>% 
+  
+  # Exclude children under 3
+  filter(CAGE>35) %>% 
+  
+  # Sample one child from household
+  sample_one_per_group(group_var = "house_index",
+                       seed = 42) %>% 
+
+  # Omit rows with missing values for key predictors
+  filter_at(vars(ED5A, HL13, HL17), all_vars(!is.na(.)))
+```
+
+## Imputation
+
+```{r}
+uzbekistan_mics$UB8[is.na(uzbekistan_mics$UB8)] <- 0
+```
+
+
+# Correlations and associations
+
+```{r, warning=F}
+
+results <- pairwise_chi_cramers_parallel(
+  uzbekistan_mics[, names(uzbekistan_mics) %in% c("UB2", "ED5A","UB8","HH48", "HH51","HC10E", "HH7", "HH6", "HL13", "HL17", "windex5", "ED4", "playthings_sum", "two_plus_playthings", "supervised_inadequately", "psy_aggression", "early_stimulation", "ecdi_sum", "dev_on_track", "received_econ_assist" )], n_cores = 4, p_threshold = 0.05, use_bonferroni = FALSE)
+
+
+# Get summary
+summary_stats(results)
+
+# Create heatmap
+plot <- plot_cramers_heatmap(results, text_size_x = 11, text_size_y = 11)
+print(plot)
+
+# View top associations
+top_20 <- get_top_associations(results, n = 20)
+print(top_20)
+```
+
+# Combining data for multilevel modeling
+
+```{r}
+# If we decide to grand-center anything
+region_uz <- region_uz %>%
+  # Log-transform to compress the scale
+  mutate(popul_mln_total_01012022 = popul_thsnd_total_01012022/1000)
+region_uz <- grand_mean_centering(region_uz, colnames(region_uz)[-c(1:2)])
+region_uz <- region_uz %>%
+  # Log-transform to compress the scale
+  mutate(popul_density_2022_log = log(popul_density_2022),
+         total_pre_2022_log = log(total_pre_2022),
+         places_in_pre_total_2022_log = log(places_in_pre_total_2022),
+         pre_teachers_total_2022_log = log(pre_teachers_total_2022))
+
+uzb_df <- uzbekistan_mics %>%
+  mutate(region_mics = as.character(as_factor(HH7))) %>% 
+  left_join(region_uz,
+            by = "region_mics",
+            keep = FALSE)
+```
+
+# Modeling
+
+## Baseline models
+
+### Null model
+
+```{r}
+# RANDOM INTERCEPT WITH FIXED SLOPES
+
+# Null model (unconditional model) - to calculate ICC
+model_null <- glmer(
+  UB8 ~ 1 + (1 | region_mics),
+  data = uzb_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+# Calculate Intraclass Correlation Coefficient (ICC)
+# ICC tells us how much variance is due to clustering
+# An ICC > 0.05 or 0.10 or typically justifies using a multilevel model
+vpc_null <- performance::icc(model_null)
+print(paste("ICC:", round(vpc_null$ICC_adjusted, 3)))
+```
+
+### All individual predictors + universal regional predictors
+
+```{r}
+# Baseline random intercept model
+model_for_pooling <- glmer(
+  UB8 ~ 
+    # Level 1 predictors (child/household)
+    CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    two_plus_playthings +
+    supervised_inadequately +
+    psy_aggression +
+    early_stimulation +
+    dev_on_track +
+    HH6 + # Rural/urban
+    HH48 + # household size
+    HL13 + # Natural mother lives in the household
+    HL17 + # Natural father lives in the household
+    windex5 +
+    HC10E + # Family has a car
+
+    
+    # Level 2 predictors (structure)
+    popul_mln_total_01012022 +
+    popul_density_2022_log +
+    total_pre_2022_log +
+
+    # Random intercept for region
+    (1 | region),
+  
+  data = uzb_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+# Model summary
+summary(model_for_pooling, correlation =TRUE)
+
+or_model <- model_for_pooling
+ame_model <- avg_slopes(model_for_pooling, type = "response")
+
+modelsummary(
+  list(
+    "Odds Ratios" = or_model,
+    "Marginal Effects" = ame_model
+  ),
+  exponentiate = c(TRUE, FALSE),
+  statistic = "conf.int",
+  stars = TRUE,
+  output = "gt"
+)
+```
+
+```{r}
+anova(model_null, model_for_pooling)
+check_collinearity(model_for_pooling)
+r2(model_for_pooling)
+r2(model_null)
+```
+
+```{r}
+# Robustness check
+model_fe_region <- glm(
+  UB8 ~ CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    two_plus_playthings +
+    supervised_inadequately +
+    psy_aggression +
+    early_stimulation +
+    dev_on_track +
+    HH6 + # Rural/urban
+    HH48 + # household size
+    HL13 + # Natural mother lives in the household
+    HL17 + # Natural father lives in the household
+    windex5 +
+    HC10E + # Family has a car
+    
+    # Level 2 predictors (structure)
+    popul_mln_total_01012022 +
+    popul_density_2022_log +
+    total_pre_2022_log +
+    factor(region),
+  data = uzb_df,
+  family = binomial
+)
+
+modelsummary(
+  list(
+    "Multilevel model" = model_for_pooling,
+    "Region Fixed Effects Model" = model_fe_region
+  ),
+  exponentiate = TRUE
+)
+```
+
+### All available country-specific variables, fixed slopes
+
+```{r}
+model_full <- glmer(
+    UB8 ~ 
+    # Level 1 predictors (child/household)
+    CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    two_plus_playthings +
+    supervised_inadequately +
+    psy_aggression +
+    early_stimulation +
+    dev_on_track +
+    received_econ_assist + # Social transfers!
+    HH6 + # Rural/urban
+    HH48 + # household size
+    HL13 + # Natural mother lives in the household
+    HL17 + # Natural father lives in the household
+    windex5 +
+    HC10E + # Family has a car
+    
+    # Level 2 predictors (structure)
+    popul_mln_total_01012022 +
+    popul_density_2022_log +
+    total_pre_2022_log +   
+    places_in_pre_total_2022_log +
+    pre_teachers_total_2022_log +
+    labor_force_part_men_2022_c + 
+    labor_force_part_women_2022_c +
+    private_pre_share_c +
+    
+    # Random intercept for region
+    (1 | region),
+  
+  data = uzb_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+summary(model_full, correlation = TRUE)
+
+or_model_full <- model_full
+ame_model_full <- avg_slopes(model_full, type = "response")
+modelsummary(
+  list("Odds Ratios" = or_model_full, "Marginal Effects" = ame_model_full),
+  exponentiate = c(TRUE, FALSE),
+  statistic = "conf.int",
+  stars = TRUE,
+  output = "gt"
+)
+
+anova(model_for_pooling, model_full)
+check_collinearity(model_full)
+r2(model_full)
+```
+
+
+## Reduced models
+### Only significant fixed effects (p < .05) from model_full
+
+```{r}
+model_sign <- glmer(
+    UB8 ~ 
+    # Level 1 predictors (child/household)
+    CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    two_plus_playthings +
+    HC10E + # Family has a car
+    
+    # Random intercept for region
+    (1 | region),  
+  data = uzb_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+summary(model_sign, correlation = TRUE)
+
+or_model_sign <- model_sign
+ame_model_sign <- avg_slopes(model_sign, type = "response")
+modelsummary(
+  list("Odds Ratios" = or_model_sign, "Marginal Effects" = ame_model_sign),
+  exponentiate = c(TRUE, FALSE),
+  statistic = "conf.int",
+  stars = TRUE,
+  output = "gt"
+)
+
+anova(model_full, model_sign)
+check_collinearity(model_sign)
+r2(model_sign)
+```
+
+### Extra model: interactions + random slopes
+
+```{r}
+model_extra <- glmer(
+  UB8 ~ 
+    # Level 1 predictors (child/household)
+    CAGE + # Age in months
+    ED5A + # mother's/caregiver's education
+    EC1 + #Three or more books
+    windex5 +
+    two_plus_playthings+
+    HC10E + # Family has a car
+    
+    # Level 2 predictors (structure)
+    popul_density_2022_log +
+    total_pre_2022_log +
+    places_in_pre_total_2022_log +
+    
+    # Random slopes
+    (1 + windex5 | region_mics),
+  
+  data = uzb_df,
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))
+)
+
+summary(model_extra, correlation = TRUE)
+
+or_model_extra <- model_extra
+ame_model_extra <- avg_slopes(model_extra, type = "response")
+modelsummary(
+  list("Odds Ratios" = or_model_extra, "Marginal Effects" = ame_model_extra),
+  exponentiate = c(TRUE, FALSE),
+  statistic = "conf.int",
+  stars = TRUE,
+  output = "gt"
+)
+
+anova(model_sign, model_extra)
+check_collinearity(model_extra)
+r2(model_extra)
+```
+
+# Model comparison table
+
+```{r}
+modelsummary(
+  list(
+    "Null"         = model_null,
+    "For Pooling"  = model_for_pooling,
+    "Full"         = model_full,
+    "Significant"  = model_sign,
+    "Extra"        = model_extra
+  ),
+  exponentiate = TRUE,
+  statistic = "conf.int",
+  stars = TRUE,
+  gof_map = c("nobs", "logLik", "AIC", "BIC", "icc", "r2.marginal", "r2.conditional"),
+  output = "gt"
+)
+```
+
+```{r}
+# Plots
+# Coefficient plot (OR forest plot) for model_sign
+
+coef_df <- tidy(model_sign, effects = "fixed", conf.int = TRUE, exponentiate = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    sig = case_when(
+      p.value < 0.001 ~ "p < .001",
+      p.value < 0.01  ~ "p < .01",
+      p.value < 0.05  ~ "p < .05",
+      TRUE            ~ "n.s."
+    ),
+    sig = factor(sig, levels = c("p < .001", "p < .01", "p < .05", "n.s."))
+  )
+
+p_coef <- ggplot(coef_df, aes(x = estimate, y = reorder(term, estimate), color = sig)) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c("p < .001" = "#d73027", "p < .01" = "#f46d43",
+               "p < .05" = "#fdae61", "n.s." = "grey60")
+  ) +
+  labs(
+    title    = "Odds Ratios — Significant Model",
+    x        = "Odds Ratio (95% CI)",
+    y        = NULL,
+    color    = "Significance"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+print(p_coef)
+
+
+# Marginal effects plot (AME) 
+ame_df <- as.data.frame(ame_model_sign) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    sig = case_when(
+      p.value < 0.001 ~ "p < .001",
+      p.value < 0.01  ~ "p < .01",
+      p.value < 0.05  ~ "p < .05",
+      TRUE            ~ "n.s."
+    ),
+    sig = factor(sig, levels = c("p < .001", "p < .01", "p < .05", "n.s."))
+  )
+
+p_ame <- ggplot(ame_df, aes(x = estimate, y = reorder(term, estimate), color = sig)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c("p < .001" = "#d73027", "p < .01" = "#f46d43",
+               "p < .05" = "#fdae61", "n.s." = "grey60")
+  ) +
+  labs(
+    title = "Average Marginal Effects — Significant Model",
+    x     = "AME on Pr(UB8=1)",
+    y     = NULL,
+    color = "Significance"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+print(p_ame)
+
+
+#  Predicted probabilities for key predictors
+pred_ed5a <- ggpredict(model_sign, terms = "ED5A [all]", bias_correction = TRUE)
+p_ed5a <- plot(pred_ed5a) +
+  labs(title = "Predicted Probability by Mother's Education (ED5A)",
+       x = "Education Level", y = "Pr(UB8 = 1)") +
+  theme_bw(base_size = 12)+
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+pred_windex <- ggpredict(model_sign, terms = "HC10E [all]", bias_correction = TRUE)
+p_windex <- plot(pred_windex) +
+  labs(title = "Predicted Probability by Car Ownership",
+       x = "Car Ownership (HC10E)", y = "Pr(UB8 = 1)") +
+  theme_bw(base_size = 12)
+
+print(p_ed5a)
+print(p_windex)
+```
+
+```{r}
+#  4. Random effects (regional variation) 
+re_df <- ranef(model_sign, condVar = TRUE)$region %>%
+  tibble::rownames_to_column("region") %>%
+  rename(intercept = `(Intercept)`) %>%
+  mutate(
+    se = sqrt(attr(ranef(model_sign, condVar = TRUE)$region, "postVar")[1, 1, ]),
+    lower = intercept - 1.96 * se,
+    upper = intercept + 1.96 * se
+  )
+
+p_re <- ggplot(re_df, aes(x = intercept, y = reorder(region, intercept))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.3, color = "steelblue") +
+  geom_point(size = 3, color = "steelblue") +
+  labs(
+    title = "Regional Random Intercepts (±1.96 SE)",
+    x     = "Random Intercept (log-odds scale)",
+    y     = "Region"
+  ) +
+  theme_bw(base_size = 12)
+
+print(p_re)
+
+
+#  5. Random slopes by region (model_extra: windex5 | region_mics) 
+re_slopes_df <- ranef(model_extra, condVar = TRUE)$region_mics %>%
+  tibble::rownames_to_column("region") %>%
+  rename(intercept = `(Intercept)`, slope_windex = windex5)
+
+p_slopes <- ggplot(re_slopes_df, aes(x = intercept, y = slope_windex, label = region)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_point(size = 3, color = "steelblue") +
+  ggrepel::geom_text_repel(size = 3) +
+  labs(
+    title = "Random Intercepts vs. Random Slopes for Wealth Index by Region",
+    x     = "Random Intercept",
+    y     = "Random Slope (windex5)"
+  ) +
+  theme_bw(base_size = 12)
+
+print(p_slopes)
+
+
+#  ICC and R² across models — summary bar chart 
+model_list <- list(
+  "Null"        = model_null,
+  "For Pooling" = model_for_pooling,
+  "Full"        = model_full,
+  "Significant" = model_sign,
+  "Extra"       = model_extra
+)
+
+r2_df <- purrr::map_dfr(names(model_list), function(nm) {
+  r2_vals <- r2(model_list[[nm]])
+  icc_result <- tryCatch(
+    performance::icc(model_list[[nm]])$ICC_adjusted,
+    error = function(e) NA_real_
+  )
+  
+  tibble::tibble(
+    model        = nm,
+    R2_marginal  = r2_vals$R2_marginal,
+    R2_conditional = r2_vals$R2_conditional,
+    ICC          = icc_result
+  )
+}) %>%
+  tidyr::pivot_longer(-model, names_to = "metric", values_to = "value") %>%
+  mutate(model = factor(model, levels = names(model_list)))
+
+p_r2 <- ggplot(r2_df, aes(x = model, y = value, fill = metric)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(
+    values = c("R2_marginal" = "#4575b4", "R2_conditional" = "#74add1", "ICC" = "#f46d43"),
+    labels = c("ICC", "R² Conditional", "R² Marginal")
+  ) +
+  labs(
+    title = "Model Fit Comparison: R² and ICC",
+    x     = NULL,
+    y     = "Value",
+    fill  = NULL
+  ) +
+  ylim(0, 1) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+print(p_r2)
+
+```
+
+# Model predictive performance comparison
+
+```{r}
+# Splitting data
+
+uzb_df <- uzb_df %>%
+  mutate(strata_var = paste0(region_mics, "_", UB8))
+
+train_idx <- createDataPartition(uzb_df$strata_var, p = 0.75, list = FALSE)
+train_df  <- uzb_df[train_idx, ]
+test_df   <- uzb_df[-train_idx, ]
+
+
+# Refit all models on training data
+# Swapping uzb_df to train_df in each model call
+# Example:
+model_null_train <- update(model_null, data = train_df)
+model_pool_train <- update(model_for_pooling, data = train_df)
+model_full_train <- update(model_full, data = train_df)
+model_sign_train <- update(model_sign, data = train_df)
+model_extra_train <- update(model_extra, data = train_df)
+
+# Predict test set
+# allow.new.levels = TRUE handles regions in test not seen in train
+predict_prob <- function(model, newdata) {
+  predict(model, newdata = newdata, type = "response", allow.new.levels = TRUE)
+}
+
+probs <- list(
+  Null = predict_prob(model_null_train, test_df),
+  For_Pooling = predict_prob(model_pool_train, test_df),
+  Full = predict_prob(model_full_train, test_df),
+  Significant = predict_prob(model_sign_train, test_df),
+  Extra = predict_prob(model_extra_train, test_df)
+)
+
+
+# Metrics
+
+metrics_df <- purrr::map2_dfr(
+  probs, names(probs),
+  ~ compute_metrics(.x, as.numeric(as.character(test_df$UB8)), .y)
+)
+
+```
+
+# Performance comparison table
+
+```{r}
+metrics_df %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3))) %>%
+  gt::gt() %>%
+  gt::tab_header(title = "Out-of-Sample Prediction Accuracy Comparison") %>%
+  gt::fmt_number(columns = where(is.numeric), decimals = 3) %>%
+  gt::cols_label(
+    Model       = "Model",
+    AUC         = "AUC",
+    Accuracy    = "Accuracy",
+    Sensitivity = "Sensitivity",
+    Specificity = "Specificity",
+    PPV         = "Precision (PPV)",
+    F1          = "F1 Score",
+    Brier       = "Brier Score",
+    LogLoss     = "Log Loss"
+  ) %>%
+  gt::tab_style(
+    style = gt::cell_fill(color = "#d4edda"),
+    locations = gt::cells_body(
+      rows = Accuracy == max(Accuracy)
+    )
+  )
+
+# ROC curves plot (all models)
+roc_list <- purrr::map2(probs, names(probs), function(p, nm) {
+  roc_obj <- roc(as.numeric(as.character(test_df$UB8)), p, quiet = TRUE)
+  data.frame(
+    model       = paste0(nm, " (AUC=", round(auc(roc_obj), 3), ")"),
+    sensitivity = roc_obj$sensitivities,
+    specificity = roc_obj$specificities
+  )
+})
+
+roc_df <- dplyr::bind_rows(roc_list)
+
+p_roc <- ggplot(roc_df, aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_line(linewidth = 0.9) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "ROC Curves — Out-of-Sample Performance",
+    x     = "1 - Specificity (FPR)",
+    y     = "Sensitivity (TPR)",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+print(p_roc)
+
+
+# Calibration plot — predicted vs. observed probabilities
+cal_df <- purrr::map2_dfr(probs, names(probs), function(p, nm) {
+  data.frame(
+    model    = nm,
+    pred     = p,
+    observed = as.numeric(as.character(test_df$UB8))
+  )
+})
+
+# Bin predictions into deciles per model
+cal_binned <- cal_df %>%
+  dplyr::group_by(model) %>%
+  dplyr::mutate(bin = ntile(pred, 10)) %>%
+  dplyr::group_by(model, bin) %>%
+  dplyr::summarise(
+    mean_pred = mean(pred),
+    mean_obs  = mean(observed),
+    .groups   = "drop"
+  )
+
+p_cal <- ggplot(cal_binned, aes(x = mean_pred, y = mean_obs, color = model)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_line(linewidth = 0.7, alpha = 0.8) +
+  geom_point(size = 2) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "Calibration Plot — Predicted vs. Observed Probabilities",
+    x     = "Mean Predicted Probability",
+    y     = "Mean Observed Proportion",
+    color = NULL
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "bottom")
+
+print(p_cal)
+```

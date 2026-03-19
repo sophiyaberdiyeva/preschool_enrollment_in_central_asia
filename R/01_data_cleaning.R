@@ -120,9 +120,8 @@ retrieve_study_vars <- function(dataset, survey = "MICS", verbose=FALSE){
     "UB7",        # Did child attend programme since September [year] (Yes/No)
     "UB8",        # Currently attending early childhood education programme
     "UB8A",       # Does child currently attend programme (Yes/No)
-    "UB8B"        # Does child currently attend programme (alternative question) (Yes/No)
+    "UB8B"       # Does child currently attend programme (alternative question) (Yes/No)
   )
-  
   
   # DHS Variable Codes
   dhs_vars <- c(
@@ -519,6 +518,106 @@ recode_economic_assistance <- function(df, unit_base, number_base, n_programs = 
   return(df_recoded)
 }
 
+library(dplyr)
+library(haven)
+
+recode_education_scheme <- function(df, var_name, country_code) {
+  # Define target labels
+  education_labels <- c(
+    "PRESCHOOL/ECE" = 0,
+    "SECONDARY" = 1,
+    "VOCATIONAL" = 2,
+    "HIGHER" = 3,
+    "DK" = 8,
+    "NO RESPONSE" = 9
+  )
+  
+  # Convert to uppercase for consistency
+  country_code <- toupper(country_code)
+  
+  # Determine recoding scheme based on country
+  if (country_code %in% c("UZ", "UZB")) {
+    # UZBEKISTAN
+    df_recoded <- df %>%
+      mutate(
+        !!var_name := case_when(
+          as.numeric(.data[[var_name]]) == 0 ~ 0,  # ECE → ECE
+          as.numeric(.data[[var_name]]) == 1 ~ 1,  # PRIMARY → SECONDARY
+          as.numeric(.data[[var_name]]) == 2 ~ 1,  # SECONDARY → SECONDARY
+          as.numeric(.data[[var_name]]) == 3 ~ 2,  # SECONDARY SPECIALIZED VOCATIONAL → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 4 ~ 3,  # HIGHER → HIGHER
+          as.numeric(.data[[var_name]]) == 8 ~ 8,  # DK → DK
+          as.numeric(.data[[var_name]]) == 9 ~ 9,  # NO RESPONSE → NO RESPONSE
+          TRUE ~ NA_real_
+        )
+      )
+    
+  } else if (country_code %in% c("TM", "TKM")) {
+    # TURKMENISTAN
+    df_recoded <- df %>%
+      mutate(
+        !!var_name := case_when(
+          as.numeric(.data[[var_name]]) == 0 ~ 0,  # PRE-SCHOOL → ECE
+          as.numeric(.data[[var_name]]) == 1 ~ 1,  # SECONDARY(1-12) → SECONDARY
+          as.numeric(.data[[var_name]]) == 2 ~ 2,  # TECHNICAL VOCATIONAL → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 3 ~ 2,  # SECONDARY VOCATIONAL → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 4 ~ 3,  # HIGHER → HIGHER
+          as.numeric(.data[[var_name]]) == 8 ~ 8,  # DK → DK
+          as.numeric(.data[[var_name]]) == 9 ~ 9,  # NO RESPONSE → NO RESPONSE
+          TRUE ~ NA_real_
+        )
+      )
+    
+  } else if (country_code %in% c("KG", "KGZ")) {
+    # KYRGYZSTAN
+    df_recoded <- df %>%
+      mutate(
+        !!var_name := case_when(
+          as.numeric(.data[[var_name]]) == 0 ~ 0,  # PRE-SCHOOL → ECE
+          as.numeric(.data[[var_name]]) == 1 ~ 1,  # PRIMARY → SECONDARY
+          as.numeric(.data[[var_name]]) == 2 ~ 1,  # BASIC SECONDARY → SECONDARY
+          as.numeric(.data[[var_name]]) == 3 ~ 1,  # COMPLETE SECONDARY → SECONDARY
+          as.numeric(.data[[var_name]]) == 4 ~ 2,  # PROFESSIONAL SECONDARY/MIDDLE → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 5 ~ 3,  # HIGHER → HIGHER
+          as.numeric(.data[[var_name]]) == 8 ~ 8,  # DK → DK
+          as.numeric(.data[[var_name]]) == 9 ~ 9,  # NO RESPONSE → NO RESPONSE
+          TRUE ~ NA_real_
+        )
+      )
+    
+  } else if (country_code %in% c("KZ", "KAZ")) {
+    # KAZAKHSTAN
+    df_recoded <- df %>%
+      mutate(
+        !!var_name := case_when(
+          as.numeric(.data[[var_name]]) == 0 ~ 0,  # PRESCHOOL → ECE
+          as.numeric(.data[[var_name]]) == 1 ~ 1,  # PRIMARY[1-4] → SECONDARY
+          as.numeric(.data[[var_name]]) == 2 ~ 1,  # LOWER SECONDARY[5-9] → SECONDARY
+          as.numeric(.data[[var_name]]) == 3 ~ 1,  # UPPER SECONDARY[10-11/12] → SECONDARY
+          as.numeric(.data[[var_name]]) == 4 ~ 2,  # TVE → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 5 ~ 2,  # POST-SECONDARY → VOCATIONAL
+          as.numeric(.data[[var_name]]) == 6 ~ 3,  # UNDERGRADUATE → HIGHER
+          as.numeric(.data[[var_name]]) == 7 ~ 3,  # POSTGRADUATE → HIGHER
+          as.numeric(.data[[var_name]]) == 8 ~ 8,  # DK → DK
+          as.numeric(.data[[var_name]]) == 9 ~ 9,  # NO RESPONSE → NO RESPONSE
+          TRUE ~ NA_real_
+        )
+      )
+    
+  } else {
+    # Unknown country code
+    stop(paste("Unknown country code:", country_code, 
+               "\nSupported codes: UZ/UZB, TM/TKM, KG/KGZ, KZ/KAZ"))
+  }
+  
+  # Apply labels to the recoded variable
+  df_recoded[[var_name]] <- labelled(
+    df_recoded[[var_name]],
+    labels = education_labels
+  )
+  
+  return(df_recoded)
+}
 
 # Sampling one child in a household
 sample_one_per_group <- function(df, group_var, seed = NULL) {
